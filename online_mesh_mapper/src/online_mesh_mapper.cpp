@@ -1,0 +1,1331 @@
+#include <cstdio>
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <string>
+#include "sensor_msgs/msg/point_cloud2.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include <climits>
+#include <cassert>
+#include <chrono>
+#include <fstream>
+#include <string>
+#include <mutex>
+#include <vector>
+#include <thread>
+#include <cmath>
+#include "nav_msgs/msg/odometry.hpp"
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2/convert.h>
+#include <tf2/transform_datatypes.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include "../lib/VoxelGraph.h"
+#include "mesh_msgs/msg/mesh_geometry_stamped.hpp"
+//#include "mesh_tools.h"
+using std::placeholders::_1;
+using namespace std;
+
+typedef struct{
+    uint32_t vertex_index1;
+    uint32_t vertex_index2;
+    uint32_t vertex_index3;
+    uint64_t vertex_normal_index;
+} OutFace_t;
+
+typedef struct{
+    float x;
+    float y;
+    float z;
+} OutVertex_t;
+
+typedef struct{
+    OutVertex_t v1;
+    uint32_t v_index1;
+    OutVertex_t v2;
+    uint32_t v_index2;
+    OutVertex_t v3;
+    uint32_t v_index3;
+    OutVertex_t v4;
+    uint32_t v_index4;
+    uint8_t vertex_normal_index;
+    bool dead;
+} InFace_t;
+
+
+typedef struct{
+    std::vector<uint32_t> requestor_indices;
+    OutVertex_t coords;
+} InVertex_t;
+
+typedef struct{
+    std::vector<OutFace_t> faces;
+    std::vector<OutVertex_t> vertices;
+} ChunkMesh_t;
+
+typedef union{
+    uint8_t buf[4];
+    float valuef;
+} FUCKING_WHY_DO_I_HAVE_TO_DO_THIS_GOD_IS_DEAD_AND_I_KILLED_HIM_t;
+
+
+class OnlineMeshMapper : public rclcpp::Node
+{
+
+
+  public:
+    OnlineMeshMapper()
+    : Node("online_mesh_mapper"), count_(0){   
+        this->declare_parameter<std::string>("in_topic", "");
+        this->declare_parameter<std::string>("frame_id", "");
+        this->declare_parameter<std::string>("odometry_msg_topic", "");
+        this->declare_parameter<std::string>("out_topic", "");
+        this->declare_parameter<int>("scalar", 0);
+        this->declare_parameter<int>("render_distance_horizontal", 0);
+        this->declare_parameter<int>("render_distance_vertical", 0);
+        this->render_distance_horizontal = this->get_parameter("render_distance_horizontal").as_int();
+        this->render_distance_vertical = this->get_parameter("render_distance_vertical").as_int();
+        this->out_topic = this->get_parameter("out_topic").as_string();
+        this->scalar = this->get_parameter("scalar").as_int();
+        this->topic = this->get_parameter("in_topic").as_string();
+        this->frame_id = this->get_parameter("frame_id").as_string();
+        this->odom_topic = this->get_parameter("odometry_msg_topic").as_string();
+        while(this->topic == "" || this->frame_id == "" || odom_topic == "" ||
+                this->scalar == 0 || this->out_topic == ""){
+            if(this->topic == ""){
+                RCLCPP_WARN(this->get_logger(), "SET THE \"in_topic\" PARAMETER");
+            }
+            if(this->frame_id == ""){
+                RCLCPP_WARN(this->get_logger(), "SET THE \"frame_id\" PARAMETER");
+            }
+            if(this->odom_topic == ""){
+                RCLCPP_WARN(this->get_logger(), "SET THE \"odometry_msg_topic\" PARAMETER");
+            }
+            if(this->scalar == 0){
+                RCLCPP_WARN(this->get_logger(), "SET THE \"scalar\" PARAMETER");
+            }
+            if(this->out_topic == "")
+            {
+                RCLCPP_WARN(this->get_logger(), "SET THE \"out_topic\" PARAMETER");
+            }
+            if(this->scalar = this->get_parameter("scalar").as_int());
+            this->odom_topic = this->get_parameter("odometry_msg_topic").as_string();
+            this->topic = this->get_parameter("in_topic").as_string();
+            this->frame_id = this->get_parameter("frame_id").as_string();
+            this->out_topic = this->get_parameter("out_topic").as_string();
+
+            rclcpp::sleep_for(std::chrono::seconds(5));
+        }
+        RCLCPP_INFO(this->get_logger(), "initializing topics\n");
+        publisher_ = this->create_publisher<mesh_msgs::msg::MeshGeometryStamped>(out_topic, 1);
+        timer_ = this->create_wall_timer(
+        200ms, std::bind(&OnlineMeshMapper::timer_callback, this));
+        subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                topic , 1,
+                std::bind(&OnlineMeshMapper::point_cloud_in_callback, 
+                this, _1));
+        subscription_two = this->create_subscription<nav_msgs::msg::Odometry>(odom_topic,
+                1, std::bind(&OnlineMeshMapper::odom_callback, this, _1)); 
+
+        RCLCPP_INFO(this->get_logger(), "starting the mapper\n");
+        graph = voxel_graph_init();
+        RCLCPP_INFO(this->get_logger(), "node initialized\n");
+    }
+    ~OnlineMeshMapper(){
+        build_and_publish_mesh(graph, publisher_);
+        //writeGlobalWavefront(graph); //not functional as of november
+        voxel_graph_free(&graph);
+    }
+  private:
+    bool out_vertex_equals(OutVertex_t v1, OutVertex_t v2){
+        bool x_equal = fabs(v1.x - v2.x) < 0.005f;
+        bool y_equal = fabs(v1.y - v2.y) < 0.005f;
+        bool z_equal = fabs(v1.z - v2.z) < 0.005f;
+        return x_equal && y_equal && z_equal;
+
+    }
+    bool out_vertex_z_equals(OutVertex_t v1, OutVertex_t v2){
+        bool z_equal = fabs(v1.z - v2.z) < 0.005f;
+        return z_equal;
+    }
+    
+    bool out_vertex_x_equals(OutVertex_t v1, OutVertex_t v2){
+        bool x_equal = fabs(v1.x - v2.x) < 0.005f;
+        return x_equal;
+    }
+    bool out_vertex_2_out_of_3_equal(OutVertex_t v1, OutVertex_t v2){
+        int equal_counter = 0;
+        equal_counter += (fabs(v1.x - v2.x) < 0.005f) * 1;
+        equal_counter += (fabs(v1.y - v2.y) < 0.005f) * 1;
+        equal_counter += (fabs(v1.z - v2.z) < 0.005f) * 1;
+        if(equal_counter >= 2){
+            return true;
+        }
+        return false;
+    }
+
+
+    int32_t requestor_hash_table_add(int32_t index, std::vector<int32_t>* hash_table){
+        uint32_t hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&index), sizeof(int32_t), 2953741627, &hash);
+        hash = hash & (hash_table->size() - 1);
+        uint32_t double_hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&index), sizeof(int32_t), 1623094874, &double_hash);
+        
+        for(uint64_t i = 0; i < 10; i++){
+            uint32_t end_hash = ((uint64_t)hash + (i * (uint64_t)double_hash)) % hash_table->size();
+            int32_t hash_table_val = hash_table->at(end_hash);
+            if(hash_table_val == -1){
+                hash_table->at(end_hash) = index;
+                return index;
+            }
+            else if(hash_table_val == index){
+                //printf("do I ever get here?\n");
+                return hash_table_val;
+            }
+        }
+        return -1;
+
+
+    }
+    int32_t requestor_hash_table_lookup(int32_t index, std::vector<int32_t>* hash_table){
+        uint32_t hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&index), sizeof(int32_t), 2953741627, &hash);
+        hash = hash & (hash_table->size() - 1);
+        uint32_t double_hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&index), sizeof(int32_t), 1623094874, &double_hash);
+        
+        for(uint64_t i = 0; i < 10; i++){
+            uint32_t end_hash = ((uint64_t)hash + (i * (uint64_t)double_hash)) % hash_table->size();
+            int32_t hash_table_val = hash_table->at(end_hash);
+            if(hash_table_val == -1){
+                return -1;
+            }
+            else if(hash_table_val == index){
+                //printf("do I ever get here?\n");
+                return hash_table_val;
+            }
+        }
+        return -1;
+    }
+    int32_t get_adjacent_face(uint32_t face_index, int32_t v1_index, int32_t v2_index,
+            std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices){
+        assert(v1_index < vertices->size());
+        assert(v2_index < vertices->size());
+        uint8_t face_normal = faces->at(face_index).vertex_normal_index;
+        std::vector<int32_t> requestor_hash_table(1<<4, -1);
+        for(uint32_t i = 0; i < vertices->at(v1_index).requestor_indices.size(); i++){
+            requestor_hash_table_add(vertices->at(v1_index).requestor_indices.at(i), &requestor_hash_table);
+        }
+        for(uint32_t i = 0; i < vertices->at(v2_index).requestor_indices.size(); i++){
+            int32_t index = -1;
+            index = requestor_hash_table_lookup(vertices->at(v2_index).requestor_indices.at(i), &requestor_hash_table);
+            if(index >= 0){
+                if(index != face_index && faces->at(index).vertex_normal_index == face_normal){
+                    if(faces->at(index).dead == false){
+                        return index;
+                    }
+                }
+            }
+        }   
+        return -1;
+    }
+    void face_remove_vertex(uint32_t face_index, uint32_t vertex_index,
+            std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices,
+            std::vector<int32_t>* vertex_hash_table){
+        if(faces->at(face_index).v_index1 == vertex_index){
+            faces->at(face_index).v_index1 = -1;
+            vertex_hash_table_remove(faces->at(face_index).v1, face_index, vertices, vertex_hash_table);
+        }
+        if(faces->at(face_index).v_index2 == vertex_index){
+            faces->at(face_index).v_index2 = -1;
+            vertex_hash_table_remove(faces->at(face_index).v2, face_index, vertices, vertex_hash_table);
+        }
+        if(faces->at(face_index).v_index3 == vertex_index){
+            faces->at(face_index).v_index3 = -1;
+            vertex_hash_table_remove(faces->at(face_index).v3, face_index, vertices, vertex_hash_table);
+        }
+        if(faces->at(face_index).v_index4 == vertex_index){
+            faces->at(face_index).v_index4 = -1;
+            vertex_hash_table_remove(faces->at(face_index).v4, face_index, vertices, vertex_hash_table);
+        }
+    }
+
+    void face_reinsert_vertex(int32_t face_index, OutVertex_t v,
+            std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices,
+            std::vector<int32_t>* vertex_hash_table){
+        if(faces->at(face_index).v_index1 == -1){
+            if(out_vertex_2_out_of_3_equal(faces->at(face_index).v1, v)){
+                faces->at(face_index).v1 = v;
+                faces->at(face_index).v_index1 = vertex_hash_table_request(faces->at(face_index).v1, face_index, vertices, vertex_hash_table);
+                return;
+            }
+        }
+        if(faces->at(face_index).v_index2 == -1){
+            if(out_vertex_2_out_of_3_equal(faces->at(face_index).v2, v)){
+                faces->at(face_index).v2 = v;
+                faces->at(face_index).v_index2 = vertex_hash_table_request(faces->at(face_index).v2, face_index, vertices, vertex_hash_table);
+                return;
+            }
+        }
+        if(faces->at(face_index).v_index3 == -1){
+            if(out_vertex_2_out_of_3_equal(faces->at(face_index).v3, v)){
+                faces->at(face_index).v3 = v;
+                faces->at(face_index).v_index3 = vertex_hash_table_request(faces->at(face_index).v3, face_index, vertices, vertex_hash_table);
+                return;
+            }
+        }
+        if(faces->at(face_index).v_index4 == -1){
+            if(out_vertex_2_out_of_3_equal(faces->at(face_index).v4, v)){
+                faces->at(face_index).v4 = v;
+                faces->at(face_index).v_index4 = vertex_hash_table_request(faces->at(face_index).v4, face_index, vertices, vertex_hash_table);
+                return;
+            }
+        }
+    }
+    void fuse_faces(int32_t face_index1, int32_t face_index2,
+            int32_t shared_vertex_index1, int32_t shared_vertex_index2, 
+            std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices,
+            std::vector<int32_t>* vertex_hash_table){
+        std::vector<OutVertex_t> vertices_to_add_on_face1;
+        if(faces->at(face_index2).v_index1 != shared_vertex_index1 && faces->at(face_index2).v_index1 != shared_vertex_index2){
+            vertices_to_add_on_face1.push_back(faces->at(face_index2).v1);
+        }
+        if(faces->at(face_index2).v_index2 != shared_vertex_index1 && faces->at(face_index2).v_index2 != shared_vertex_index2){
+            vertices_to_add_on_face1.push_back(faces->at(face_index2).v2);
+        }
+        if(faces->at(face_index2).v_index3 != shared_vertex_index1 && faces->at(face_index2).v_index3 != shared_vertex_index2){
+            vertices_to_add_on_face1.push_back(faces->at(face_index2).v3);
+        }
+        if(faces->at(face_index2).v_index4 != shared_vertex_index1 && faces->at(face_index2).v_index4 != shared_vertex_index2){
+            vertices_to_add_on_face1.push_back(faces->at(face_index2).v4);
+        }
+        assert(!out_vertex_equals(vertices_to_add_on_face1.at(0), vertices->at(shared_vertex_index1).coords));
+        assert(!out_vertex_equals(vertices_to_add_on_face1.at(0), vertices->at(shared_vertex_index1).coords));
+        assert(!out_vertex_equals(vertices_to_add_on_face1.at(1), vertices->at(shared_vertex_index1).coords));
+        assert(!out_vertex_equals(vertices_to_add_on_face1.at(1), vertices->at(shared_vertex_index1).coords));
+        vertex_hash_table_remove(faces->at(face_index2).v1, face_index2, vertices, vertex_hash_table);
+        vertex_hash_table_remove(faces->at(face_index2).v2, face_index2, vertices, vertex_hash_table);
+        vertex_hash_table_remove(faces->at(face_index2).v3, face_index2, vertices, vertex_hash_table);
+        vertex_hash_table_remove(faces->at(face_index2).v4, face_index2, vertices, vertex_hash_table);
+        faces->at(face_index2).dead = true;
+        
+        face_remove_vertex(face_index1, shared_vertex_index1, faces, vertices, vertex_hash_table);
+        face_remove_vertex(face_index1, shared_vertex_index2, faces, vertices, vertex_hash_table);
+        face_reinsert_vertex(face_index1, vertices_to_add_on_face1.at(0), faces, vertices, vertex_hash_table);
+        face_reinsert_vertex(face_index1, vertices_to_add_on_face1.at(1), faces, vertices, vertex_hash_table);
+    }
+
+
+    void fuse_faces_above_and_below(uint32_t face_index, std::vector<InFace_t>* faces,
+            std::vector<InVertex_t>* vertices, std::vector<int32_t>* vertex_hash_table){
+        //in the face creation in the chunk generation v1 is always an upper one
+        //v3 is always a lower one. this is a bit hacky but it saves a whole lot
+        //of work this is when the normal vector is ABOVE 2
+        //for a normal vector at 2 or below this is reversed
+        bool fusion_done = true;
+        while(fusion_done){   
+            fusion_done = false;
+            int32_t upper_vertex_index1 = -1;
+            int32_t upper_vertex_index2 = -1;
+            int32_t lower_vertex_index1 = -1;
+            int32_t lower_vertex_index2 = -1;
+            uint8_t vertex_normal = faces->at(face_index).vertex_normal_index;
+            switch(vertex_normal){
+                case 1:
+                    upper_vertex_index1 = faces->at(face_index).v_index4;
+                    upper_vertex_index2 = faces->at(face_index).v_index3;
+                    lower_vertex_index1 = faces->at(face_index).v_index1;
+                    lower_vertex_index2 = faces->at(face_index).v_index2;
+                    break;
+                case 2:
+                    upper_vertex_index1 = faces->at(face_index).v_index2;
+                    upper_vertex_index2 = faces->at(face_index).v_index3;
+                    lower_vertex_index1 = faces->at(face_index).v_index1;
+                    lower_vertex_index2 = faces->at(face_index).v_index4;
+                    break;
+                case 3:
+                    upper_vertex_index1 = faces->at(face_index).v_index1;
+                    upper_vertex_index2 = faces->at(face_index).v_index4;
+                    lower_vertex_index1 = faces->at(face_index).v_index3;
+                    lower_vertex_index2 = faces->at(face_index).v_index2;
+                    break;
+                case 4:
+                    upper_vertex_index1 = faces->at(face_index).v_index1;
+                    upper_vertex_index2 = faces->at(face_index).v_index2;
+                    lower_vertex_index1 = faces->at(face_index).v_index3;
+                    lower_vertex_index2 = faces->at(face_index).v_index4;
+                    break;
+                case 5:
+                    upper_vertex_index1 = faces->at(face_index).v_index1;
+                    upper_vertex_index2 = faces->at(face_index).v_index2;
+                    lower_vertex_index1 = faces->at(face_index).v_index4;
+                    lower_vertex_index2 = faces->at(face_index).v_index3;
+                    break;
+                case 6:
+                    upper_vertex_index1 = faces->at(face_index).v_index1;
+                    upper_vertex_index2 = faces->at(face_index).v_index4;
+                    lower_vertex_index1 = faces->at(face_index).v_index2;
+                    lower_vertex_index2 = faces->at(face_index).v_index3;
+                    break;
+
+            }
+            int32_t upper_adjacent_face_index = -1;
+            int32_t lower_adjacent_face_index = -1;
+            upper_adjacent_face_index = get_adjacent_face(face_index, upper_vertex_index1, upper_vertex_index2, faces, vertices);
+            if(upper_adjacent_face_index != -1){
+                fuse_faces(face_index, upper_adjacent_face_index, upper_vertex_index1, upper_vertex_index2, faces, vertices, vertex_hash_table);
+                fusion_done = true;
+            }
+            lower_adjacent_face_index = get_adjacent_face(face_index, lower_vertex_index1, lower_vertex_index2, faces, vertices);
+            if(lower_adjacent_face_index != -1){
+                fuse_faces(face_index, lower_adjacent_face_index, lower_vertex_index1, lower_vertex_index2, faces, vertices, vertex_hash_table);
+                fusion_done = true;
+            }
+        }
+    }
+
+    void fuse_faces_left_and_right(uint32_t face_index, std::vector<InFace_t>* faces,
+            std::vector<InVertex_t>* vertices, std::vector<int32_t>* vertex_hash_table){
+        bool fusion_done = true;
+        while(fusion_done){   
+            int32_t left_vertex_index1 = -1;
+            int32_t left_vertex_index2 = -1;
+            int32_t right_vertex_index1 = -1;
+            int32_t right_vertex_index2 = -1;
+
+            fusion_done = false;
+            uint8_t vertex_normal = faces->at(face_index).vertex_normal_index;
+            switch(vertex_normal){
+                case 1:
+                    left_vertex_index1 = faces->at(face_index).v_index1;
+                    left_vertex_index2 = faces->at(face_index).v_index4;
+                    right_vertex_index1 = faces->at(face_index).v_index3;
+                    right_vertex_index2 = faces->at(face_index).v_index2;
+                    break;
+                case 2:
+                    left_vertex_index1 = faces->at(face_index).v_index1;
+                    left_vertex_index2 = faces->at(face_index).v_index2;
+                    right_vertex_index1 = faces->at(face_index).v_index3;
+                    right_vertex_index2 = faces->at(face_index).v_index4;
+                    break;
+                case 3:
+                    left_vertex_index1 = faces->at(face_index).v_index4;
+                    left_vertex_index2 = faces->at(face_index).v_index3;
+                    right_vertex_index1 = faces->at(face_index).v_index1;
+                    right_vertex_index2 = faces->at(face_index).v_index2;
+                    break;
+                case 4:
+                    left_vertex_index1 = faces->at(face_index).v_index2;
+                    left_vertex_index2 = faces->at(face_index).v_index3;
+                    right_vertex_index1 = faces->at(face_index).v_index1;
+                    right_vertex_index2 = faces->at(face_index).v_index4;
+                    break;
+                case 5:
+                    left_vertex_index1 = faces->at(face_index).v_index1;
+                    left_vertex_index2 = faces->at(face_index).v_index4;
+                    right_vertex_index1 = faces->at(face_index).v_index3;
+                    right_vertex_index2 = faces->at(face_index).v_index2;
+                    break;
+                case 6:
+                    left_vertex_index1 = faces->at(face_index).v_index1;
+                    left_vertex_index2 = faces->at(face_index).v_index2;
+                    right_vertex_index1 = faces->at(face_index).v_index3;
+                    right_vertex_index2 = faces->at(face_index).v_index4;
+                    break;
+            }
+            int32_t left_adjacent_face_index = -1;
+            int32_t right_adjacent_face_index = -1;
+            left_adjacent_face_index = get_adjacent_face(face_index, left_vertex_index1, left_vertex_index2, faces, vertices);
+            if(left_adjacent_face_index != -1){
+                fuse_faces(face_index, left_adjacent_face_index, left_vertex_index1, left_vertex_index2, faces, vertices, vertex_hash_table);
+                fusion_done = true;
+            }
+            right_adjacent_face_index = get_adjacent_face(face_index, right_vertex_index1, right_vertex_index2, faces, vertices);
+            if(right_adjacent_face_index != -1){
+                fuse_faces(face_index, right_adjacent_face_index, right_vertex_index1, right_vertex_index2, faces, vertices, vertex_hash_table);
+                fusion_done = true;
+            }
+        }
+    }
+    void reduce_faces(std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices, std::vector<int32_t>* vertex_hash_table){
+        for(uint32_t i = 0; i < faces->size(); i++){
+            if(faces->at(i).dead == true){
+                continue;
+            }
+            fuse_faces_above_and_below(i, faces, vertices, vertex_hash_table);
+        }
+        for(uint32_t i = 0; i < faces->size(); i++){
+            if(faces->at(i).dead == true){
+                continue;
+            }
+            fuse_faces_left_and_right(i, faces, vertices, vertex_hash_table);
+        }
+
+
+    }
+
+    int32_t vertex_hash_table_request(OutVertex_t v, uint32_t face_requestor_index, 
+            std::vector<InVertex_t>* vertices, std::vector<int32_t>* vertex_hash_table)
+    {
+        uint32_t hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&v), sizeof(OutVertex_t), 2953741627, &hash);
+        hash = hash & (vertex_hash_table->size() - 1);
+        uint32_t double_hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&v), sizeof(OutVertex_t), 1623094874, &double_hash);
+        
+        for(uint64_t i = 0; i < 10; i++){
+            uint32_t end_hash = ((uint64_t)hash + (i * (uint64_t)double_hash)) % vertex_hash_table->size();
+            int32_t hash_table_val = vertex_hash_table->at(end_hash);
+            if(hash_table_val == -1){
+                InVertex_t new_vertex;
+                new_vertex.coords = v;
+                new_vertex.requestor_indices.push_back(face_requestor_index);
+                vertices->push_back(new_vertex);
+                vertex_hash_table->at(end_hash) = vertices->size() - 1;
+                return vertices->size() - 1;
+            }
+            else if(out_vertex_equals(vertices->at(hash_table_val).coords, v)){
+                //printf("do I ever get here?\n");
+                bool duplicate_found = false;
+                for(uint32_t j = 0; j < vertices->at(hash_table_val).requestor_indices.size() && !duplicate_found; j++){
+                    if(vertices->at(hash_table_val).requestor_indices.at(j) == face_requestor_index){
+                        duplicate_found = true;
+                    }
+                }
+                if(duplicate_found == false){
+                    vertices->at(hash_table_val).requestor_indices.push_back(face_requestor_index);
+                }
+                return hash_table_val;
+            }
+        }
+        return -1;
+    }
+
+    int32_t vertex_hash_table_remove(OutVertex_t v, uint32_t face_requestor_index, 
+            std::vector<InVertex_t>* vertices, std::vector<int32_t>* vertex_hash_table){
+        uint32_t hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&v), sizeof(OutVertex_t), 2953741627, &hash);
+        hash = hash & (vertex_hash_table->size() - 1);
+        uint32_t double_hash = 0;
+        MurmurHash3_x86_32(static_cast<void*>(&v), sizeof(OutVertex_t), 1623094874, &double_hash);
+        
+        for(uint64_t i = 0; i < 10; i++){
+            uint32_t end_hash = ((uint64_t)hash + (i * (uint64_t)double_hash)) % vertex_hash_table->size();
+            int32_t hash_table_val = vertex_hash_table->at(end_hash);
+            if(hash_table_val == -1){
+                return -1;
+            }
+            else if(out_vertex_equals(vertices->at(hash_table_val).coords, v)){
+                for(uint32_t j = 0; j < vertices->at(hash_table_val).requestor_indices.size(); j++){
+                    if(vertices->at(hash_table_val).requestor_indices.at(j) == face_requestor_index){
+                        //printf("do I ever get here?\n");
+                        vertices->at(hash_table_val).requestor_indices.erase(vertices->at(hash_table_val).requestor_indices.begin() + j);
+                    }
+                }
+                return hash_table_val;
+            }
+        }
+        return -1;
+    }
+
+    void greedy_mesher_enter_vertices(std::vector<InFace_t>* faces, 
+            std::vector<InVertex_t>* vertices, std::vector<int32_t>* vertex_hash_table){
+        for(uint32_t i = 0; i < faces->size(); i++){
+            faces->at(i).v_index1 = vertex_hash_table_request(faces->at(i).v1, i, vertices, vertex_hash_table);
+            faces->at(i).v_index2 = vertex_hash_table_request(faces->at(i).v2, i, vertices, vertex_hash_table);
+            faces->at(i).v_index3 = vertex_hash_table_request(faces->at(i).v3, i, vertices, vertex_hash_table);
+            faces->at(i).v_index4 = vertex_hash_table_request(faces->at(i).v4, i, vertices, vertex_hash_table);
+        }
+    }
+    void greedy_mesher_write_output_mesh(ChunkMesh_t* out_mesh,
+            std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices){
+        uint32_t neg_offset = 0;
+        for(uint32_t i = 0; i < vertices->size(); i++){
+            if(vertices->at(i).requestor_indices.size() == 0){
+                neg_offset++;
+            }
+            else{
+                OutVertex_t v = vertices->at(i).coords;
+                out_mesh->vertices.push_back(v);
+                for(uint32_t j = 0; j < vertices->at(i).requestor_indices.size(); j++){
+                    uint32_t index = vertices->at(i).requestor_indices.at(j);
+                    if(faces->at(index).v_index1 == i){
+                        faces->at(index).v_index1 -= neg_offset;
+                    }
+                    else if(faces->at(index).v_index2 == i){
+                        faces->at(index).v_index2 -= neg_offset;
+                    }
+                    else if(faces->at(index).v_index3 == i){
+                        faces->at(index).v_index3 -= neg_offset;
+                    }
+                    else if(faces->at(index).v_index4 == i){
+                        faces->at(index).v_index4 -= neg_offset;
+                    }
+                }
+            }
+
+        }
+        for(uint32_t i = 0; i < faces->size(); i++){
+            if(faces->at(i).dead){
+                continue;
+            }
+            OutFace_t out_face1;
+            OutFace_t out_face2;
+
+            out_face1.vertex_index1 = faces->at(i).v_index1;
+            out_face1.vertex_index2 = faces->at(i).v_index2;
+            out_face1.vertex_index3 = faces->at(i).v_index4;
+            out_face1.vertex_normal_index = faces->at(i).vertex_normal_index;
+
+
+            out_face2.vertex_index1 = faces->at(i).v_index2;
+            out_face2.vertex_index2 = faces->at(i).v_index3;
+            out_face2.vertex_index3 = faces->at(i).v_index4;
+            out_face2.vertex_normal_index = faces->at(i).vertex_normal_index;
+            out_mesh->faces.push_back(out_face1);
+            out_mesh->faces.push_back(out_face2);
+        }
+    }
+    ChunkMesh_t gen_chunk_mesh_with_greedy_mesher(Chunk_t* chunk){   
+        ChunkMesh_t output;
+        std::vector<InFace_t> in_faces;
+        std::vector<InVertex_t> in_vertices;
+        std::vector<int32_t> vertex_hash_table(1 << 17, -1);
+        uint32_t current_vertex_index = 1;
+        for(uint32_t i = 0; i < chunk->current_node_index; i++){
+            OutVertex_t v1;
+            OutVertex_t v2;
+            OutVertex_t v3;
+            OutVertex_t v4;
+            InVertex_t vertex;
+            InFace_t face;
+            face.dead = false;
+            Vertex_t anchor_vertex = chunk->nodes[i].coord_and_mesh_info;
+            if(anchor_vertex.buf[2] == 0){
+                continue;
+            }
+            if(!vertex_get_up_bit(&anchor_vertex)){   
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                face.v1 = v1;
+                face.v2 = v4;
+                face.v3 = v3;
+                face.v4 = v2;
+                face.vertex_normal_index = 1;
+                in_faces.push_back(face);
+
+            }
+            if(!vertex_get_down_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                face.v1 = v1;
+                face.v2 = v2;
+                face.v3 = v3;
+                face.v4 = v4;
+                face.vertex_normal_index = 2;
+                in_faces.push_back(face);
+
+            }
+            if(!vertex_get_left_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                face.v1 = v1;
+                face.v2 = v4;
+                face.v3 = v3;
+                face.v4 = v2;
+                face.vertex_normal_index = 3;
+                in_faces.push_back(face);
+
+            }
+            if(!vertex_get_right_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                face.v1 = v1;
+                face.v2 = v2;
+                face.v3 = v3;
+                face.v4 = v4;
+                face.vertex_normal_index = 4;
+                in_faces.push_back(face);
+
+            }
+            if(!vertex_get_foward_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                face.v1 = v1;
+                face.v2 = v4;
+                face.v3 = v3;
+                face.v4 = v2;
+                face.vertex_normal_index = 5;
+                in_faces.push_back(face);
+
+            }
+            if(!vertex_get_back_bit(&anchor_vertex)){  
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                face.v1 = v1;
+                face.v2 = v2;
+                face.v3 = v3;
+                face.v4 = v4;
+                face.vertex_normal_index = 6;
+                in_faces.push_back(face);
+
+            }
+        }
+        greedy_mesher_enter_vertices(&in_faces, &in_vertices, &vertex_hash_table);
+        reduce_faces(&in_faces, &in_vertices, &vertex_hash_table);
+        greedy_mesher_write_output_mesh(&output, &in_faces, &in_vertices);
+        return output;
+    }
+
+
+
+    ChunkMesh_t gen_chunk_mesh(Chunk_t* chunk){   
+        ChunkMesh_t output;
+        uint32_t current_vertex_index = 0;
+        for(uint32_t i = 0; i < chunk->current_node_index; i++){
+            OutVertex_t v1;
+            OutVertex_t v2;
+            OutVertex_t v3;
+            OutVertex_t v4;
+
+            OutFace_t face;
+            Vertex_t anchor_vertex = chunk->nodes[i].coord_and_mesh_info;
+            if(!vertex_get_up_bit(&anchor_vertex)){   
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                output.vertices.push_back(v1);
+                output.vertices.push_back(v4);
+                output.vertices.push_back(v3);
+                output.vertices.push_back(v2);
+                face.vertex_index1 = current_vertex_index;
+                face.vertex_index2 = current_vertex_index + 1;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 1;
+                output.faces.push_back(face);
+
+                face.vertex_index1 = current_vertex_index + 1;
+                face.vertex_index2 = current_vertex_index + 2;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 1;
+                output.faces.push_back(face);
+
+                current_vertex_index += 4;
+
+            }
+            if(!vertex_get_down_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                output.vertices.push_back(v1);
+                output.vertices.push_back(v2);
+                output.vertices.push_back(v3);
+                output.vertices.push_back(v4);
+
+                face.vertex_index1 = current_vertex_index;
+                face.vertex_index2 = current_vertex_index + 1;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 2;
+                output.faces.push_back(face);
+
+                face.vertex_index1 = current_vertex_index + 1;
+                face.vertex_index2 = current_vertex_index + 2;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 2;
+                output.faces.push_back(face);
+
+                current_vertex_index += 4;
+
+            }
+            if(!vertex_get_left_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                output.vertices.push_back(v1);
+                output.vertices.push_back(v4);
+                output.vertices.push_back(v3);
+                output.vertices.push_back(v2);
+
+                face.vertex_index1 = current_vertex_index;
+                face.vertex_index2 = current_vertex_index + 1;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 3;
+                output.faces.push_back(face);
+
+                face.vertex_index1 = current_vertex_index + 1;
+                face.vertex_index2 = current_vertex_index + 2;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 3;
+                output.faces.push_back(face);
+
+
+                current_vertex_index += 4;
+
+            }
+            if(!vertex_get_right_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+                
+                output.vertices.push_back(v1);
+                output.vertices.push_back(v2);
+                output.vertices.push_back(v3);
+                output.vertices.push_back(v4);
+
+                face.vertex_index1 = current_vertex_index;
+                face.vertex_index2 = current_vertex_index + 1;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 4;
+                output.faces.push_back(face);
+
+                face.vertex_index1 = current_vertex_index + 1;
+                face.vertex_index2 = current_vertex_index + 2;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 4;
+                output.faces.push_back(face);
+
+
+                current_vertex_index += 4;
+
+            }
+            if(!vertex_get_foward_bit(&anchor_vertex)){
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset + 1) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                output.vertices.push_back(v1);
+                output.vertices.push_back(v4);
+                output.vertices.push_back(v3);
+                output.vertices.push_back(v2);
+
+                face.vertex_index1 = current_vertex_index;
+                face.vertex_index2 = current_vertex_index + 1;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 5;
+                output.faces.push_back(face);
+
+                face.vertex_index1 = current_vertex_index + 1;
+                face.vertex_index2 = current_vertex_index + 2;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 5;
+                output.faces.push_back(face);
+
+
+                current_vertex_index += 4;
+
+            }
+            if(!vertex_get_back_bit(&anchor_vertex)){  
+                v1.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v1.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v1.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                v2.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v2.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset) / scalar;
+                v2.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v3.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v3.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v3.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset - 1) / scalar;
+
+                v4.x = (float)((uint32_t)vertex_pick_x_coord(anchor_vertex.vertex_coords) + chunk->x_offset) / scalar;
+                v4.y = (float)((uint32_t)vertex_pick_y_coord(anchor_vertex.vertex_coords) + chunk->y_offset + 1) / scalar;
+                v4.z = (float)((uint32_t)vertex_pick_z_coord(anchor_vertex.vertex_coords) + chunk->z_offset) / scalar;
+                
+                output.vertices.push_back(v1);
+                output.vertices.push_back(v2);
+                output.vertices.push_back(v3);
+                output.vertices.push_back(v4);
+
+                face.vertex_index1 = current_vertex_index;
+                face.vertex_index2 = current_vertex_index + 1;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 6;
+                output.faces.push_back(face);
+
+                face.vertex_index1 = current_vertex_index + 1;
+                face.vertex_index2 = current_vertex_index + 2;
+                face.vertex_index3 = current_vertex_index + 3;
+                face.vertex_normal_index = 6;
+                output.faces.push_back(face);
+
+
+                current_vertex_index += 4;
+
+            }
+        }
+        //RCLCPP_INFO(this->get_logger(), "chunk construction done %ld faces are in the mesh", output.faces.size());
+        return output;
+
+    }
+    void build_and_publish_regional_mesh(VoxelGraph_t* graph,
+            uint32_t hor_chunk_radius, uint32_t vert_chunk_radius,
+            rclcpp::Publisher<mesh_msgs::msg::MeshGeometryStamped>::SharedPtr pub){
+        std::vector<ChunkMesh_t> chunk_local_meshes(graph->current_chunk_index);
+        std::vector<thread*> active_threads;
+        std::vector<OutVertex_t> vertex_normals;
+        OutVertex_t up_normal = {0.0f, 0.0f, 1.0f};
+        vertex_normals.push_back(up_normal);
+        OutVertex_t down_normal = {0.0f, 0.0f, -1.0f};
+        vertex_normals.push_back(down_normal);
+        OutVertex_t left_normal = {0.0f, 1.0f, 0.0f};
+        vertex_normals.push_back(left_normal);
+        OutVertex_t right_normal = {0.0f, -1.0f, 0.0f};
+        vertex_normals.push_back(right_normal);
+        OutVertex_t foward_normal = {1.0f, 0.0f, 0.0f};
+        vertex_normals.push_back(foward_normal);
+        OutVertex_t back_normal = {-1.0f, 0.0f, 0.0f};
+        vertex_normals.push_back(back_normal);
+
+        int64_t x_neg_target = global_point.x - hor_chunk_radius * 32;
+        int64_t x_pos_target = global_point.x + hor_chunk_radius * 32;
+        int64_t y_neg_target = global_point.y - hor_chunk_radius * 32;
+        int64_t y_pos_target = global_point.y + hor_chunk_radius * 32;
+        int64_t z_neg_target = global_point.z - vert_chunk_radius * 32;
+        int64_t z_pos_target = global_point.z + vert_chunk_radius * 32;
+        std::vector<uint32_t> chunk_indices;
+        for(int64_t x = x_neg_target; x <= x_pos_target; x += 32){
+            for(int64_t y = y_neg_target; y <= y_pos_target; y += 32){
+                for(int64_t z = z_neg_target; z <= z_pos_target; z += 32){
+                    int64_t chunk_index = voxel_graph_chunk_hash_table_lookup(graph, x, y, z);
+                    if(chunk_index >= 0){
+                        chunk_indices.push_back(chunk_index);
+                    }
+                }
+            }
+        }
+        for(uint32_t i = 0; i < chunk_indices.size(); i++){
+            thread* t = new thread(&OnlineMeshMapper::build_mesh_section_global, this, chunk_indices.at(i), chunk_indices.at(i), graph, &chunk_local_meshes);
+            active_threads.push_back(t);
+        }
+        for(uint32_t i = 0; i < active_threads.size(); i++){
+            active_threads[i]->join();
+        }      
+        publish_meshes(&chunk_local_meshes, &vertex_normals, pub);
+        return;
+
+    }
+    static void build_mesh_section_global(OnlineMeshMapper* self, uint32_t first_index, uint32_t last_index,
+            VoxelGraph_t* graph, std::vector<ChunkMesh_t>* output){
+        for(uint32_t i = first_index; i <= last_index; i++){
+            //output->at(i) = self->genChunkMesh(&(graph->chunks[i]));
+            output->at(i) = self->gen_chunk_mesh_with_greedy_mesher(&(graph->chunks[i]));
+        }
+        return;
+    }
+    void build_and_publish_mesh(VoxelGraph_t* graph, rclcpp::Publisher<mesh_msgs::msg::MeshGeometryStamped>::SharedPtr pub){
+        std::vector<OutVertex_t> vertex_normals;
+        OutVertex_t up_normal = {0.0f, 0.0f, 1.0f};
+        vertex_normals.push_back(up_normal);
+        OutVertex_t down_normal = {0.0f, 0.0f, -1.0f};
+        vertex_normals.push_back(down_normal);
+        OutVertex_t left_normal = {0.0f, 1.0f, 0.0f};
+        vertex_normals.push_back(left_normal);
+        OutVertex_t right_normal = {0.0f, -1.0f, 0.0f};
+        vertex_normals.push_back(right_normal);
+        OutVertex_t foward_normal = {1.0f, 0.0f, 0.0f};
+        vertex_normals.push_back(foward_normal);
+        OutVertex_t back_normal = {-1.0f, 0.0f, 0.0f};
+        vertex_normals.push_back(back_normal);
+        std::vector<ChunkMesh_t> chunk_local_meshes(graph->current_chunk_index);
+        std::vector<thread*> active_threads;
+        //uint32_t threadCount = std::thread::hardware_concurrency();
+        //uint32_t chunksPerThread = graph->current_chunk_index / threadCount;
+        //uint32_t currentIndex = 0;
+        /*
+        for(uint32_t i = 0; i < threadCount; i++)
+        {
+            thread* t = new thread(&HtMeshMapper::buildMeshSectionGlobal,this, currentIndex, currentIndex + (chunksPerThread - 1), graph, &chunk_local_meshes);
+            activeThreads.push_back(t);
+            currentIndex += chunksPerThread;
+        }
+        for(uint32_t i = 0; i < threadCount; i++)
+        {
+            threads[i]->join();
+            delete threads[i];
+            threads[i] = NULL;
+        }
+        */
+        
+        //if(currentIndex < graph->current_chunk_index)
+        //{
+        for(uint32_t i = 0; i < graph->current_chunk_index; i++){
+            thread* t = new thread(&OnlineMeshMapper::build_mesh_section_global, this, i, i, graph, &chunk_local_meshes);
+            active_threads.push_back(t); 
+        }
+        for(uint32_t i = 0; i < active_threads.size(); i++){
+            active_threads[i]->join();
+        }
+                       
+        publish_meshes(&chunk_local_meshes, &vertex_normals, pub);
+        return;
+    }
+    void publish_meshes(std::vector<ChunkMesh_t>* meshes,
+            std::vector<OutVertex_t>* vertex_normals,
+            rclcpp::Publisher<mesh_msgs::msg::MeshGeometryStamped>::SharedPtr pub){
+        mesh_msgs::msg::MeshGeometryStamped msg;
+        msg.header.frame_id = this->frame_id;
+        RCLCPP_INFO(this->get_logger(), "publishing mesh with the tf frame %s", msg.header.frame_id.c_str());
+        uint64_t vertex_offset = 0;
+        for(uint64_t i = 0; i < meshes->size(); i++){
+            for(uint64_t j = 0; j < meshes->at(i).vertices.size(); j++){
+                geometry_msgs::msg::Point vertex;
+                vertex.x = meshes->at(i).vertices.at(j).x;
+                vertex.y = meshes->at(i).vertices.at(j).y;
+                vertex.z = meshes->at(i).vertices.at(j).z;
+                msg.mesh_geometry.vertices.push_back(vertex);
+            }
+            for(uint64_t j = 0; j < meshes->at(i).faces.size(); j++)
+            {
+                meshes->at(i).faces.at(j).vertex_index1 += vertex_offset;
+                meshes->at(i).faces.at(j).vertex_index2 += vertex_offset;
+                meshes->at(i).faces.at(j).vertex_index3 += vertex_offset;
+            }
+
+            vertex_offset += meshes->at(i).vertices.size();
+        }
+        /*
+        for(uint64_t i = 0; i < normals->size(); i++)
+        {
+            
+        }
+        */
+        for(uint64_t i = 0; i < meshes->size(); i++){
+            for(uint64_t j = 0; j < meshes->at(i).faces.size(); j++){
+                mesh_msgs::msg::MeshTriangleIndices face;
+                face.vertex_indices[0] = meshes->at(i).faces.at(j).vertex_index1;
+                face.vertex_indices[1] = meshes->at(i).faces.at(j).vertex_index2;
+                face.vertex_indices[2] = meshes->at(i).faces.at(j).vertex_index3;
+                msg.mesh_geometry.faces.push_back(face);
+            }
+        }
+        RCLCPP_INFO(this->get_logger(), "the global mesh contains %ld vertices", msg.mesh_geometry.vertices.size());
+        pub->publish(msg);
+    
+    }
+    void write_global_wavefront(VoxelGraph_t* graph){
+        io_mutex.lock();
+        std::vector<OutVertex_t> vertex_normals;
+        OutVertex_t up_normal = {0.0f, 0.0f, 1.0f};
+        vertex_normals.push_back(up_normal);
+        OutVertex_t down_normal = {0.0f, 0.0f, -1.0f};
+        vertex_normals.push_back(down_normal);
+        OutVertex_t left_normal = {0.0f, 1.0f, 0.0f};
+        vertex_normals.push_back(left_normal);
+        OutVertex_t right_normal = {0.0f, -1.0f, 0.0f};
+        vertex_normals.push_back(right_normal);
+        OutVertex_t foward_normal = {1.0f, 0.0f, 0.0f};
+        vertex_normals.push_back(foward_normal);
+        OutVertex_t back_normal = {-1.0f, 0.0f, 0.0f};
+        vertex_normals.push_back(back_normal);
+ 
+        std::vector<ChunkMesh_t> chunk_local_meshes;
+
+        for(uint32_t i = 0; i < graph->current_chunk_index; i++){
+            chunk_local_meshes.push_back(gen_chunk_mesh(&(graph->chunks[i])));   
+        }
+        write_mesh_file(&chunk_local_meshes, &vertex_normals);
+        io_mutex.unlock();
+    }
+    void write_mesh_file(std::vector<ChunkMesh_t>* meshes, std::vector<OutVertex_t>* normals){
+        RCLCPP_INFO(this->get_logger(), "exiting node: building the final mesh");
+        std::string filepath = "/home/martin/Desktop";
+        fstream output_mesh(filepath + "/" + "HtMeshMap.obj", std::ios::out | std::ios::trunc);
+        uint64_t vertex_offset = 1;
+        for(uint64_t i = 0; i < meshes->size(); i++){
+            for(uint64_t j = 0; j < meshes->at(i).vertices.size(); j++){
+                std::string out_str = "";
+                std::string x = std::to_string(meshes->at(i).vertices.at(j).x);
+                std::string y = std::to_string(meshes->at(i).vertices.at(j).y);
+                std::string z = std::to_string(meshes->at(i).vertices.at(j).z);
+                out_str = "v " + x + " " + y + " " + z;
+                output_mesh << out_str;
+                output_mesh << "\n";
+            }
+            for(uint64_t j = 0; j < meshes->at(i).faces.size(); j++){
+                meshes->at(i).faces.at(j).vertex_index1 += vertex_offset;
+                meshes->at(i).faces.at(j).vertex_index2 += vertex_offset;
+                meshes->at(i).faces.at(j).vertex_index3 += vertex_offset;
+            }
+
+            vertex_offset += meshes->at(i).vertices.size();
+        }
+        for(uint64_t i = 0; i < normals->size(); i++){
+            std::string out_str = "";
+            std::string x = std::to_string(normals->at(i).x);
+            std::string y = std::to_string(normals->at(i).y);
+            std::string z = std::to_string(normals->at(i).z);
+            out_str = "vn "+ x + " " + y + " " + z;
+            output_mesh << out_str;
+            output_mesh << "\n";
+        }
+        for(uint64_t i = 0; i < meshes->size(); i++){
+            for(uint64_t j = 0; j < meshes->at(i).faces.size(); j++){
+                std::string out_str = "";
+                std::string normal_index = to_string(meshes->at(i).faces.at(j).vertex_normal_index);
+                std::string index1 = to_string(meshes->at(i).faces.at(j).vertex_index1 + 1) + "//" + normal_index;
+                std::string index2 = to_string(meshes->at(i).faces.at(j).vertex_index2 + 1) + "//" + normal_index;
+                std::string index3 = to_string(meshes->at(i).faces.at(j).vertex_index3 + 1) + "//" + normal_index;
+                out_str = "f " + index1 + " " + index2 + " " + index3;
+                output_mesh << out_str;
+                output_mesh << "\n";
+
+            }
+        }
+    }
+    void timer_callback(){
+        io_mutex.lock();
+        if(graph->current_chunk_index == 0)
+        {
+            io_mutex.unlock();
+            return;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        //buildAndPublishMesh(graph, publisher_);
+        build_and_publish_regional_mesh(graph, render_distance_horizontal, render_distance_vertical, publisher_);
+        const auto end = std::chrono::steady_clock::now();
+        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        RCLCPP_INFO(this->get_logger(), "rendering the mesh took %ld ms", diff.count());
+        io_mutex.unlock();
+    }
+    VoxelGraph_t* graph;
+    std::string topic;
+    std::string frame_id = "odom";
+    std::string odom_topic = "";
+    std::string out_topic = "";
+    uint32_t scalar;
+    rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Publisher<mesh_msgs::msg::MeshGeometryStamped>::SharedPtr publisher_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription_two; 
+    size_t count_;
+    std::mutex io_mutex;
+    geometry_msgs::msg::Point global_point;
+    tf2_ros::Buffer tf_buffer_ = this->get_clock();
+    uint32_t render_distance_horizontal = 1;
+    uint32_t render_distance_vertical = 1;
+    void point_cloud_in_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+    {        
+        //this code assumes little endian and x, y, z formatting
+
+        io_mutex.lock();
+        int64_t point_count = msg->height * msg->width;
+        size_t size_of_each_point = msg->point_step;
+        const auto start = std::chrono::steady_clock::now();
+        uint64_t added_points = 0;
+        for(int64_t cnt = 0; cnt < point_count; cnt++){
+            uint32_t starting_index = cnt * size_of_each_point;
+            FUCKING_WHY_DO_I_HAVE_TO_DO_THIS_GOD_IS_DEAD_AND_I_KILLED_HIM_t binary_blob;
+            //std::memcpy(&x, ptrToStartOfPoint, sizeof(float));
+            //std::memcpy(&y, ptrToStartOfPoint + sizeof(float), sizeof(float));
+            //std::memcpy(&z, ptrToStartOfPoint + sizeof(float) * 2, sizeof(float));
+            float input_values[3] = {0,0,0};
+            for(uint8_t data_cnt = 0; data_cnt < 3; data_cnt++){
+                binary_blob.buf[0] = msg->data[starting_index + (data_cnt * 4)];
+                binary_blob.buf[1] = msg->data[starting_index + 1 + (data_cnt * 4)];
+                binary_blob.buf[2] = msg->data[starting_index + 2 + (data_cnt * 4)];
+                binary_blob.buf[3] = msg->data[starting_index + 3 + (data_cnt * 4)];
+                if(binary_blob.valuef > 9999999999999 || binary_blob.valuef < -9999999999999){
+                    continue;
+                }   
+                if(data_cnt == 2){
+                    input_values[data_cnt] = (int64_t) ((binary_blob.valuef * ((float)scalar)));
+                }
+                else{
+                    input_values[data_cnt] = std::roundf((binary_blob.valuef * ((float)scalar)));
+                }
+            }
+            starting_index += size_of_each_point;
+            if(input_values[0] < -100000){
+                RCLCPP_ERROR(this->get_logger(), "something got corrupted input value was %f", input_values[0]);
+                continue;
+            }
+            bool debug_var = false;
+            debug_var = voxel_graph_insert(graph, (int64_t) input_values[0], (int64_t) input_values[1], (int64_t) input_values[2]);
+            if(debug_var){
+                added_points++;
+            }
+        }
+        const auto end = std::chrono::steady_clock::now();
+        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        RCLCPP_INFO(this->get_logger(), "entering %ld graph points took %ld ms", added_points ,diff.count());
+        io_mutex.unlock();
+    }
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg){                                                                           
+        io_mutex.lock();
+        geometry_msgs::msg::TransformStamped transform_stamped;
+        try{
+            transform_stamped = tf_buffer_.lookupTransform(frame_id, "odom", tf2::TimePointZero);
+            geometry_msgs::msg::Point odom_point = msg->pose.pose.position;
+            tf2::doTransform(odom_point, global_point, transform_stamped);
+            global_point.x = global_point.x * scalar;
+            global_point.y = global_point.y * scalar;
+            global_point.z = global_point.z * scalar;
+           // RCLCPP_INFO(this->get_logger(), "Transformed Point: [%f, %f, %f]",
+           //          globalPoint.x, globalPoint.y, globalPoint.z);
+        } 
+        catch (tf2::TransformException &ex) {
+            RCLCPP_WARN(this->get_logger(), "Transform error: %s", ex.what());
+        }
+        io_mutex.unlock();                                                    
+    }
+};
+
+int main(int argc, char ** argv)
+{
+
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<OnlineMeshMapper>());
+    rclcpp::shutdown();
+    
+    return 0;
+
+
+}
