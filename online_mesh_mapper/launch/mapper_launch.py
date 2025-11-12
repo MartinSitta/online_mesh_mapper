@@ -16,7 +16,9 @@ def generate_launch_description():
                 'scalar': 8,
                 'render_distance_horizontal':2,
                 'render_distance_vertical':1,
-                'out_topic':'/Nav/mesh_map'
+                'out_topic':'/Nav/mesh_map',
+                'max_chunks':1<<13,#this HAS to be a power of 2
+                'obj_filepath':'/home/martin/Desktop'
             }],
         )
     ])

@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include <stdint.h>
 #define CHUNK_LIMIT (1<<10)
-#define CHUNK_HASH_TABLE_SIZE (1<<11)
+#define CHUNK_HASH_TABLE_SIZE (1<<31)
 #define CHUNK_NODE_LIMIT (1<<14)
 #define chunk_node_array_entry_t int16_t
 #define CHUNK_NODE_HASHTABLE_SIZE (1<<15)

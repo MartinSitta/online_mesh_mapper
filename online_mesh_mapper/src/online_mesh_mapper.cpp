@@ -80,18 +80,22 @@ class OnlineMeshMapper : public rclcpp::Node
         this->declare_parameter<std::string>("frame_id", "");
         this->declare_parameter<std::string>("odometry_msg_topic", "");
         this->declare_parameter<std::string>("out_topic", "");
+        this->declare_parameter<std::string>("obj_filepath", "");
+        this->declare_parameter<int>("max_chunks", 2048);
         this->declare_parameter<int>("scalar", 0);
         this->declare_parameter<int>("render_distance_horizontal", 0);
         this->declare_parameter<int>("render_distance_vertical", 0);
         this->render_distance_horizontal = this->get_parameter("render_distance_horizontal").as_int();
         this->render_distance_vertical = this->get_parameter("render_distance_vertical").as_int();
+        this->obj_filepath = this->get_parameter("obj_filepath").as_string();
+        this->chunk_amount = this->get_parameter("max_chunks").as_int();
         this->out_topic = this->get_parameter("out_topic").as_string();
         this->scalar = this->get_parameter("scalar").as_int();
         this->topic = this->get_parameter("in_topic").as_string();
         this->frame_id = this->get_parameter("frame_id").as_string();
         this->odom_topic = this->get_parameter("odometry_msg_topic").as_string();
         while(this->topic == "" || this->frame_id == "" || odom_topic == "" ||
-                this->scalar == 0 || this->out_topic == ""){
+                this->scalar == 0 || this->out_topic == "" || this->obj_filepath == ""){
             if(this->topic == ""){
                 RCLCPP_WARN(this->get_logger(), "SET THE \"in_topic\" PARAMETER");
             }
@@ -108,12 +112,20 @@ class OnlineMeshMapper : public rclcpp::Node
             {
                 RCLCPP_WARN(this->get_logger(), "SET THE \"out_topic\" PARAMETER");
             }
-            if(this->scalar = this->get_parameter("scalar").as_int());
+            if(this->obj_filepath == "")
+            {
+                RCLCPP_WARN(this->get_logger(), "SET THE \"obj_filepath\" PARAMETER");
+            }
+            if(this->scalar == 0)
+            {
+                RCLCPP_WARN(this->get_logger(), "SET THE \"scalar\" PARAMETER");
+            }
             this->odom_topic = this->get_parameter("odometry_msg_topic").as_string();
             this->topic = this->get_parameter("in_topic").as_string();
             this->frame_id = this->get_parameter("frame_id").as_string();
             this->out_topic = this->get_parameter("out_topic").as_string();
-
+            this->scalar = this->get_parameter("scalar").as_int();
+            this->obj_filepath = this->get_parameter("obj_filepath").as_string();
             rclcpp::sleep_for(std::chrono::seconds(5));
         }
         RCLCPP_INFO(this->get_logger(), "initializing topics\n");
@@ -128,12 +140,12 @@ class OnlineMeshMapper : public rclcpp::Node
                 1, std::bind(&OnlineMeshMapper::odom_callback, this, _1)); 
 
         RCLCPP_INFO(this->get_logger(), "starting the mapper\n");
-        graph = voxel_graph_init();
+        graph = voxel_graph_init(this->chunk_amount);
         RCLCPP_INFO(this->get_logger(), "node initialized\n");
     }
     ~OnlineMeshMapper(){
         build_and_publish_mesh(graph, publisher_);
-        //writeGlobalWavefront(graph); //not functional as of november
+        write_global_wavefront(graph); //not functional as of november
         voxel_graph_free(&graph);
     }
   private:
@@ -1169,16 +1181,16 @@ class OnlineMeshMapper : public rclcpp::Node
         std::vector<ChunkMesh_t> chunk_local_meshes;
 
         for(uint32_t i = 0; i < graph->current_chunk_index; i++){
-            chunk_local_meshes.push_back(gen_chunk_mesh(&(graph->chunks[i])));   
+            chunk_local_meshes.push_back(gen_chunk_mesh_with_greedy_mesher(&(graph->chunks[i])));   
         }
         write_mesh_file(&chunk_local_meshes, &vertex_normals);
         io_mutex.unlock();
     }
     void write_mesh_file(std::vector<ChunkMesh_t>* meshes, std::vector<OutVertex_t>* normals){
         RCLCPP_INFO(this->get_logger(), "exiting node: building the final mesh");
-        std::string filepath = "/home/martin/Desktop";
-        fstream output_mesh(filepath + "/" + "HtMeshMap.obj", std::ios::out | std::ios::trunc);
-        uint64_t vertex_offset = 1;
+        std::string filepath = this->obj_filepath;
+        fstream output_mesh(filepath + "/" + "OnlineMeshMap.obj", std::ios::out | std::ios::trunc);
+        uint64_t vertex_offset = 0;
         for(uint64_t i = 0; i < meshes->size(); i++){
             for(uint64_t j = 0; j < meshes->at(i).vertices.size(); j++){
                 std::string out_str = "";
@@ -1240,7 +1252,9 @@ class OnlineMeshMapper : public rclcpp::Node
     std::string frame_id = "odom";
     std::string odom_topic = "";
     std::string out_topic = "";
+    uint32_t chunk_amount;
     uint32_t scalar;
+    std::string obj_filepath;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Publisher<mesh_msgs::msg::MeshGeometryStamped>::SharedPtr publisher_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;

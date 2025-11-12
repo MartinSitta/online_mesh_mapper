@@ -27,9 +27,11 @@ void voxel_graph_init_arrays(VoxelGraph_t* graph){
 }
 
 //end helpers
-VoxelGraph_t* voxel_graph_init()
+VoxelGraph_t* voxel_graph_init(uint32_t chunk_count)
 {
-    uint32_t chunk_amount = CHUNK_LIMIT;
+    assert(chunk_count > 0);
+    assert((chunk_count & (chunk_count - 1)) == 0);
+    uint32_t chunk_amount = chunk_count;
     uint32_t chunk_hash_table_size = CHUNK_HASH_TABLE_SIZE;
     VoxelGraph_t* output = malloc(sizeof(VoxelGraph_t));
     output->chunks = NULL;
@@ -55,6 +57,8 @@ VoxelGraph_t* voxel_graph_init()
             output->chunk_hash_table_size = chunk_hash_table_size;
         }
     }
+    printf("chunk amount is %d\n", output->chunk_amount);
+    printf("chunk hashtable size is %d\n", output->chunk_hash_table_size);
     assert(output->chunk_hash_table != NULL);
     assert(output->chunk_hash_table_size > output->chunk_amount);
     voxel_graph_init_arrays(output);
