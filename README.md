@@ -1,5 +1,5 @@
-online\_mesh\_mapper package usage and installation guide
-=========================================================
+online\_mesh\_mapper
+====================
 
 The online mesh mapper is a mapping utility, which generates a mesh map
 in real time using a pointcloud2. The ros node publishes a mesh of the
