@@ -1,3 +1,70 @@
-# online_mesh_mapper
-ros2 mesh_map creation tool with performance as the primary focus
-README and docs are WIP
+online\_mesh\_mapper package usage and installation guide
+=========================================================
+
+The online mesh mapper is a mapping utility, which generates a mesh map
+in real time using a pointcloud2. The ros node publishes a mesh of the
+type mesh\_msgs/msg/MeshGeometryStamped
+(<https://github.com/naturerobots/mesh_tools/blob/main/mesh_msgs/msg/MeshGeometryStamped.msg>).
+A wavefront file also gets created when terminating the node.
+
+This mapping utility uses a greedy meshing algorithm by default. it can
+be changed by changing the source code and recompiling the package,
+however changes should only be made when only one thread is availibile
+
+Parameters for usage
+--------------------
+
+Within the package directory there is a launch file with all the
+parameters neccessary for the usage of the ros2 node. Those parameters
+are:
+
+1.  in\_topic: The topic name of the incoming pointcloud transformed to
+    a frame with global coordinates
+2.  frame\_id: The frame\_id of in\_topic
+3.  odometry\_msg\_topic: The topic of type ros2
+    nav\_msgs\_msg\_odometry that tells the node where the robot is
+4.  scalar: The factor that determines the resolution of the map model:
+    the resolution is: 1m/scalar
+5.  render\_distance\_horizontal: The horizontal render distance in
+    chunks. 1 chunk is 32 blocks. the render distance in meters per
+    chunk is: (1m/scalar) \* 32
+6.  render\_distance\_vertical: The vertical render distance in chunk.
+    the math is the same as render\_distance\_horizontal
+7.  out\_topic: The topic name of the topic this node publishes to
+8.  max\_chunks: The maximum amount of chunks this node is allowed to
+    store in RAM (ROM chunk storage is WIP). THIS HAS TO BE A POWER OF 2
+9.  obj\_filepath: The filepath, where the wavefront file gets created.
+
+Installation guide
+------------------
+
+Note that this packages target ros2 humble so I dont know if it will run
+on newer ros2 versions.
+
+-   Install the mesh navigation package from Naturerobots
+    <https://github.com/naturerobots/mesh_navigation>
+
+-   Clone this and set the parameters in the launch file
+
+-   Build the package:
+
+        colcon build #or colcon build --packages-select online_mesh_mapper
+
+Running the package
+-------------------
+
+To start the node run the command:
+
+    ros2 launch online_mesh_mapper mapper_launch.py
+
+Known issues
+------------
+
+Setting the max\_chunks too high in my case 2\^15 and higher causes ros2
+to kill the program. I havent yet found a solution for this. All I know
+about this is that this doesnt happen when running the mapping model
+outside of ros2.
+
+To avoid this issue I recommend keeping the max\_chunks parameter at a
+lower amount. Alternatively you can start 2\^32 and work your way down
+until it stops crashing.
