@@ -30,7 +30,8 @@ typedef struct{
     uint32_t vertex_index1;
     uint32_t vertex_index2;
     uint32_t vertex_index3;
-    uint64_t vertex_normal_index;
+    int64_t optional_quad_vertex;
+    uint32_t vertex_normal_index;
 } OutFace_t;
 
 typedef struct{
@@ -52,6 +53,11 @@ typedef struct{
     bool dead;
 } InFace_t;
 
+typedef struct{
+    double x;
+    double y;
+    double z;
+} DoubleVector_t;
 
 typedef struct{
     std::vector<uint32_t> requestor_indices;
@@ -61,6 +67,7 @@ typedef struct{
 typedef struct{
     std::vector<OutFace_t> faces;
     std::vector<OutVertex_t> vertices;
+    std::vector<OutVertex_t> vertex_normals;
 } ChunkMesh_t;
 
 typedef union{
@@ -69,10 +76,7 @@ typedef union{
 } FUCKING_WHY_DO_I_HAVE_TO_DO_THIS_GOD_IS_DEAD_AND_I_KILLED_HIM_t;
 
 
-class OnlineMeshMapper : public rclcpp::Node
-{
-
-
+class OnlineMeshMapper : public rclcpp::Node{
   public:
     OnlineMeshMapper()
     : Node("online_mesh_mapper"), count_(0){   
@@ -144,11 +148,80 @@ class OnlineMeshMapper : public rclcpp::Node
         RCLCPP_INFO(this->get_logger(), "node initialized\n");
     }
     ~OnlineMeshMapper(){
+        RCLCPP_WARN(this->get_logger(), "Terminating node\n");
+        RCLCPP_WARN(this->get_logger(), "Publishing final mesh\n");
         build_and_publish_mesh(graph, publisher_);
-        write_global_wavefront(graph); //not functional as of november
+        RCLCPP_WARN(this->get_logger(), "Creating wavefront\n");
+        write_global_wavefront(graph); 
+        RCLCPP_WARN(this->get_logger(), "Deleting the map model\n");
         voxel_graph_free(&graph);
     }
   private:
+
+    void raycast_delete(int64_t org_x, int64_t org_y,
+            int64_t org_z, int64_t dest_x, int64_t dest_y, int64_t dest_z){
+        DoubleVector_t diff_vect;
+        diff_vect.x = dest_x - org_x;
+        diff_vect.y = dest_y - org_y;
+        diff_vect.z = dest_z - org_z;
+        //RCLCPP_WARN(this->get_logger(), "org_vect is %ld %ld %ld \n", org_x, org_y, org_z);
+        //RCLCPP_WARN(this->get_logger(), "dest_vect is %ld %ld %ld \n", dest_x, dest_y, dest_z);
+        //RCLCPP_WARN(this->get_logger(), "diff_vect is %f %f %f \n", diff_vect.x, diff_vect.y, diff_vect.z);
+        DoubleVector_t normal = double_vect_normalize(diff_vect);
+        //RCLCPP_WARN(this->get_logger(), "normal_vect is %f %f %f \n", normal.x, normal.y, normal.z);
+        int64_t travel_x = org_x;
+        int64_t travel_y = org_y;
+        int64_t travel_z = org_z;
+        uint32_t counter = 1;
+        while(get_manhattan_dist(travel_x, travel_y, travel_z, dest_x, dest_y, dest_z) > 4){
+            bool point_deleted = voxel_graph_delete(graph, travel_x, travel_y, travel_z);
+            if(point_deleted){
+                voxel_graph_delete(graph, travel_x + 1, travel_y, travel_z);
+                voxel_graph_delete(graph, travel_x - 1, travel_y, travel_z);
+                voxel_graph_delete(graph, travel_x, travel_y + 1, travel_z);
+                voxel_graph_delete(graph, travel_x, travel_y - 1, travel_z);
+                voxel_graph_delete(graph, travel_x, travel_y, travel_z + 1);
+                voxel_graph_delete(graph, travel_x, travel_y, travel_z - 1);
+
+                voxel_graph_delete(graph, travel_x + 1, travel_y + 1, travel_z - 1);
+                voxel_graph_delete(graph, travel_x + 1, travel_y + 1, travel_z);
+                voxel_graph_delete(graph, travel_x + 1, travel_y + 1, travel_z);
+
+                voxel_graph_delete(graph, travel_x + 1, travel_y - 1, travel_z - 1);
+                voxel_graph_delete(graph, travel_x + 1, travel_y - 1, travel_z);
+                voxel_graph_delete(graph, travel_x + 1, travel_y - 1, travel_z);
+
+                voxel_graph_delete(graph, travel_x - 1, travel_y + 1, travel_z - 1);
+                voxel_graph_delete(graph, travel_x - 1, travel_y + 1, travel_z);
+                voxel_graph_delete(graph, travel_x - 1, travel_y + 1, travel_z);
+                
+                voxel_graph_delete(graph, travel_x - 1, travel_y - 1, travel_z - 1);
+                voxel_graph_delete(graph, travel_x - 1, travel_y - 1, travel_z);
+                voxel_graph_delete(graph, travel_x - 1, travel_y - 1, travel_z);
+            }
+            //RCLCPP_WARN(this->get_logger(), "old_ray_vect is %ld %ld %ld \n", travel_x, travel_y, travel_z);
+            counter += 2;
+            travel_x = std::lround(org_x + (normal.x * counter));
+            travel_y = std::lround(org_y + (normal.y * counter));
+            travel_z = std::lround(org_z + (normal.z * counter));
+            //RCLCPP_WARN(this->get_logger(), "new_ray_vect is %ld %ld %ld \n", travel_x, travel_y, travel_z);
+        }
+        voxel_graph_insert(graph, dest_x, dest_y, dest_z);
+    }
+    
+    int64_t get_manhattan_dist(int64_t org_x, int64_t org_y, int64_t org_z,
+             int64_t dest_x, int64_t dest_y, int64_t dest_z)
+    {
+        return labs(org_x - dest_x) + labs(org_y - dest_y) + labs(org_z - dest_z) ;
+    }
+    DoubleVector_t double_vect_normalize(DoubleVector_t in){       
+        DoubleVector_t out;
+        double vector_len = sqrt(in.x * in.x + in.y * in.y + in.z * in.z);
+        out.x = in.x / vector_len;
+        out.y = in.y / vector_len;
+        out.z = in.z / vector_len;
+        return out;
+    }
     bool out_vertex_equals(OutVertex_t v1, OutVertex_t v2){
         bool x_equal = fabs(v1.x - v2.x) < 0.005f;
         bool y_equal = fabs(v1.y - v2.y) < 0.005f;
@@ -550,6 +623,95 @@ class OnlineMeshMapper : public rclcpp::Node
             faces->at(i).v_index4 = vertex_hash_table_request(faces->at(i).v4, i, vertices, vertex_hash_table);
         }
     }
+
+    void greedy_mesher_enter_vertex_normals(ChunkMesh_t* out_mesh,
+            std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices){
+        
+        for(uint32_t i = 0; i < vertices->size(); i++){
+            OutVertex_t normal;
+            normal.x = 0.0f;
+            normal.y = 0.0f;
+            normal.z = 0.0f;
+            for(uint32_t j = 0; j < vertices->at(i).requestor_indices.size(); j++){
+                uint32_t face_index = vertices->at(i).requestor_indices.at(j);
+                if(faces->at(face_index).vertex_normal_index == 1){
+                    normal.z += 1;
+                }
+                if(faces->at(face_index).vertex_normal_index == 2){
+                    normal.z -= 1;
+                }
+                if(faces->at(face_index).vertex_normal_index == 3){
+                    normal.y += 1;
+                }
+                if(faces->at(face_index).vertex_normal_index == 4){
+                    normal.y -= 1;
+                }
+                if(faces->at(face_index).vertex_normal_index == 5){
+                    normal.z += 1;
+                }
+                if(faces->at(face_index).vertex_normal_index == 6){
+                    normal.z -= 1;
+                }
+            }
+            out_mesh->vertex_normals.push_back(normal);
+        }
+    }
+    void greedy_mesher_unshare_vertices_and_write_output_mesh(ChunkMesh_t* out_mesh,
+            std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices){
+        printf("entry of unshare_vertices\n");
+        uint32_t per_vertex_offset = 0;
+        uint32_t neg_offset = 0;
+        std::vector<InVertex_t> new_vertices;
+        for(uint32_t i = 0; i < vertices->size(); i++){
+            for(uint32_t j = 0; j < vertices->at(i).requestor_indices.size(); j++){
+                uint32_t index = vertices->at(i).requestor_indices.at(j);
+                InVertex_t new_vertex;
+                new_vertex.coords = vertices->at(i).coords;
+                new_vertex.requestor_indices.push_back(index);
+                new_vertices.push_back(new_vertex);
+            }   
+        }
+        *vertices = new_vertices;
+        printf("end of unshare_vertices\n");
+        greedy_mesher_reenter_vertex_indices_and_write_out_mesh(out_mesh, faces, vertices);
+    }
+
+    void greedy_mesher_reenter_vertex_indices_and_write_out_mesh(
+            ChunkMesh_t* out_mesh, std::vector<InFace_t>* faces,
+            std::vector<InVertex_t>* vertices){
+        for(uint32_t i = 0; i < vertices->size(); i++){
+            OutVertex_t v = vertices->at(i).coords;
+            out_mesh->vertices.push_back(v);
+            uint32_t index = vertices->at(i).requestor_indices.at(0);
+            if(out_vertex_equals(faces->at(index).v1, vertices->at(i).coords)){
+                faces->at(index).v_index1 = i;
+            }
+            else if(out_vertex_equals(faces->at(index).v2, vertices->at(i).coords)){
+                faces->at(index).v_index2 = i;
+            }
+            else if(out_vertex_equals(faces->at(index).v3, vertices->at(i).coords)){
+                faces->at(index).v_index3 = i;
+            }
+            else if(out_vertex_equals(faces->at(index).v4, vertices->at(i).coords)){
+                faces->at(index).v_index4 = i;
+            }
+        }
+         for(uint32_t i = 0; i < faces->size(); i++){
+            if(faces->at(i).dead){
+                continue;
+            }
+            OutFace_t out_face1;
+
+            out_face1.vertex_index1 = faces->at(i).v_index1;
+            out_face1.vertex_index2 = faces->at(i).v_index2;
+            out_face1.vertex_index3 = faces->at(i).v_index3;
+            out_face1.optional_quad_vertex = faces->at(i).v_index4;
+            out_face1.vertex_normal_index = faces->at(i).vertex_normal_index;
+            out_mesh->faces.push_back(out_face1);
+        }
+    }
+
+    
     void greedy_mesher_write_output_mesh(ChunkMesh_t* out_mesh,
             std::vector<InFace_t>* faces, std::vector<InVertex_t>* vertices){
         uint32_t neg_offset = 0;
@@ -588,18 +750,21 @@ class OnlineMeshMapper : public rclcpp::Node
             out_face1.vertex_index1 = faces->at(i).v_index1;
             out_face1.vertex_index2 = faces->at(i).v_index2;
             out_face1.vertex_index3 = faces->at(i).v_index4;
+            out_face1.optional_quad_vertex = -1;
             out_face1.vertex_normal_index = faces->at(i).vertex_normal_index;
 
 
             out_face2.vertex_index1 = faces->at(i).v_index2;
             out_face2.vertex_index2 = faces->at(i).v_index3;
             out_face2.vertex_index3 = faces->at(i).v_index4;
+            out_face2.optional_quad_vertex = -1;
             out_face2.vertex_normal_index = faces->at(i).vertex_normal_index;
+            
             out_mesh->faces.push_back(out_face1);
             out_mesh->faces.push_back(out_face2);
         }
     }
-    ChunkMesh_t gen_chunk_mesh_with_greedy_mesher(Chunk_t* chunk){   
+    ChunkMesh_t gen_chunk_mesh_with_greedy_mesher(Chunk_t* chunk, bool wavefront){   
         ChunkMesh_t output;
         std::vector<InFace_t> in_faces;
         std::vector<InVertex_t> in_vertices;
@@ -614,7 +779,7 @@ class OnlineMeshMapper : public rclcpp::Node
             InFace_t face;
             face.dead = false;
             Vertex_t anchor_vertex = chunk->nodes[i].coord_and_mesh_info;
-            if(anchor_vertex.buf[2] == 0){
+            if(anchor_vertex.buf[2] == 0 || vertex_get_dead_bit(&anchor_vertex)){
                 continue;
             }
             if(!vertex_get_up_bit(&anchor_vertex)){   
@@ -769,8 +934,19 @@ class OnlineMeshMapper : public rclcpp::Node
             }
         }
         greedy_mesher_enter_vertices(&in_faces, &in_vertices, &vertex_hash_table);
-        reduce_faces(&in_faces, &in_vertices, &vertex_hash_table);
+        if(!wavefront){
+            reduce_faces(&in_faces, &in_vertices, &vertex_hash_table);
+        }
         greedy_mesher_write_output_mesh(&output, &in_faces, &in_vertices);
+        /*
+        if(wavefront){
+            greedy_mesher_unshare_vertices_and_write_output_mesh(&output, &in_faces, &in_vertices);
+        }
+        else{
+            greedy_mesher_write_output_mesh(&output, &in_faces, &in_vertices);
+        }
+        */
+        greedy_mesher_enter_vertex_normals(&output, &in_faces, &in_vertices);
         return output;
     }
 
@@ -1054,7 +1230,7 @@ class OnlineMeshMapper : public rclcpp::Node
             }
         }
         for(uint32_t i = 0; i < chunk_indices.size(); i++){
-            thread* t = new thread(&OnlineMeshMapper::build_mesh_section_global, this, chunk_indices.at(i), chunk_indices.at(i), graph, &chunk_local_meshes);
+            thread* t = new thread(&OnlineMeshMapper::build_mesh_section_global, this, chunk_indices.at(i), chunk_indices.at(i), graph, &chunk_local_meshes, false);
             active_threads.push_back(t);
         }
         for(uint32_t i = 0; i < active_threads.size(); i++){
@@ -1065,10 +1241,10 @@ class OnlineMeshMapper : public rclcpp::Node
 
     }
     static void build_mesh_section_global(OnlineMeshMapper* self, uint32_t first_index, uint32_t last_index,
-            VoxelGraph_t* graph, std::vector<ChunkMesh_t>* output){
+            VoxelGraph_t* graph, std::vector<ChunkMesh_t>* output, bool wavefront){
         for(uint32_t i = first_index; i <= last_index; i++){
             //output->at(i) = self->genChunkMesh(&(graph->chunks[i]));
-            output->at(i) = self->gen_chunk_mesh_with_greedy_mesher(&(graph->chunks[i]));
+            output->at(i) = self->gen_chunk_mesh_with_greedy_mesher(&(graph->chunks[i]), wavefront);
         }
         return;
     }
@@ -1109,7 +1285,7 @@ class OnlineMeshMapper : public rclcpp::Node
         //if(currentIndex < graph->current_chunk_index)
         //{
         for(uint32_t i = 0; i < graph->current_chunk_index; i++){
-            thread* t = new thread(&OnlineMeshMapper::build_mesh_section_global, this, i, i, graph, &chunk_local_meshes);
+            thread* t = new thread(&OnlineMeshMapper::build_mesh_section_global, this, i, i, graph, &chunk_local_meshes, false);
             active_threads.push_back(t); 
         }
         for(uint32_t i = 0; i < active_threads.size(); i++){
@@ -1129,10 +1305,15 @@ class OnlineMeshMapper : public rclcpp::Node
         for(uint64_t i = 0; i < meshes->size(); i++){
             for(uint64_t j = 0; j < meshes->at(i).vertices.size(); j++){
                 geometry_msgs::msg::Point vertex;
+                geometry_msgs::msg::Point vertex_normal;
                 vertex.x = meshes->at(i).vertices.at(j).x;
                 vertex.y = meshes->at(i).vertices.at(j).y;
                 vertex.z = meshes->at(i).vertices.at(j).z;
                 msg.mesh_geometry.vertices.push_back(vertex);
+                vertex_normal.x = meshes->at(i).vertex_normals.at(j).x;
+                vertex_normal.y = meshes->at(i).vertex_normals.at(j).y;
+                vertex_normal.z = meshes->at(i).vertex_normals.at(j).z;
+                msg.mesh_geometry.vertex_normals.push_back(vertex_normal);
             }
             for(uint64_t j = 0; j < meshes->at(i).faces.size(); j++)
             {
@@ -1181,7 +1362,7 @@ class OnlineMeshMapper : public rclcpp::Node
         std::vector<ChunkMesh_t> chunk_local_meshes;
 
         for(uint32_t i = 0; i < graph->current_chunk_index; i++){
-            chunk_local_meshes.push_back(gen_chunk_mesh_with_greedy_mesher(&(graph->chunks[i])));   
+            chunk_local_meshes.push_back(gen_chunk_mesh_with_greedy_mesher(&(graph->chunks[i]),true));   
         }
         write_mesh_file(&chunk_local_meshes, &vertex_normals);
         io_mutex.unlock();
@@ -1197,6 +1378,13 @@ class OnlineMeshMapper : public rclcpp::Node
                 std::string x = std::to_string(meshes->at(i).vertices.at(j).x);
                 std::string y = std::to_string(meshes->at(i).vertices.at(j).y);
                 std::string z = std::to_string(meshes->at(i).vertices.at(j).z);
+                x.erase ( x.find_last_not_of('0') + 1, std::string::npos );
+                x.erase ( x.find_last_not_of('.') + 1, std::string::npos );
+                y.erase ( y.find_last_not_of('0') + 1, std::string::npos );
+                y.erase ( y.find_last_not_of('.') + 1, std::string::npos );
+                z.erase ( z.find_last_not_of('0') + 1, std::string::npos );
+                z.erase ( z.find_last_not_of('.') + 1, std::string::npos );
+
                 out_str = "v " + x + " " + y + " " + z;
                 output_mesh << out_str;
                 output_mesh << "\n";
@@ -1205,10 +1393,31 @@ class OnlineMeshMapper : public rclcpp::Node
                 meshes->at(i).faces.at(j).vertex_index1 += vertex_offset;
                 meshes->at(i).faces.at(j).vertex_index2 += vertex_offset;
                 meshes->at(i).faces.at(j).vertex_index3 += vertex_offset;
+                if(meshes->at(i).faces.at(j).optional_quad_vertex != -1){
+                    meshes->at(i).faces.at(j).optional_quad_vertex += vertex_offset;
+                }
             }
 
             vertex_offset += meshes->at(i).vertices.size();
         }
+        for(uint64_t i = 0; i < meshes->size(); i++){
+            for(uint64_t j = 0; j < meshes->at(i).vertex_normals.size(); j++){
+                std::string out_str = "";
+                std::string x = std::to_string(meshes->at(i).vertex_normals.at(j).x);
+                std::string y = std::to_string(meshes->at(i).vertex_normals.at(j).y);
+                std::string z = std::to_string(meshes->at(i).vertex_normals.at(j).z);
+                x.erase ( x.find_last_not_of('0') + 1, std::string::npos );
+                x.erase ( x.find_last_not_of('.') + 1, std::string::npos );
+                y.erase ( y.find_last_not_of('0') + 1, std::string::npos );
+                y.erase ( y.find_last_not_of('.') + 1, std::string::npos );
+                z.erase ( z.find_last_not_of('0') + 1, std::string::npos );
+                z.erase ( z.find_last_not_of('.') + 1, std::string::npos );
+                out_str = "vn "+ x + " " + y + " " + z;
+                output_mesh << out_str;
+                output_mesh << "\n";
+            }
+        }
+        /*
         for(uint64_t i = 0; i < normals->size(); i++){
             std::string out_str = "";
             std::string x = std::to_string(normals->at(i).x);
@@ -1217,15 +1426,28 @@ class OnlineMeshMapper : public rclcpp::Node
             out_str = "vn "+ x + " " + y + " " + z;
             output_mesh << out_str;
             output_mesh << "\n";
-        }
+        }*/
         for(uint64_t i = 0; i < meshes->size(); i++){
             for(uint64_t j = 0; j < meshes->at(i).faces.size(); j++){
                 std::string out_str = "";
                 std::string normal_index = to_string(meshes->at(i).faces.at(j).vertex_normal_index);
-                std::string index1 = to_string(meshes->at(i).faces.at(j).vertex_index1 + 1) + "//" + normal_index;
-                std::string index2 = to_string(meshes->at(i).faces.at(j).vertex_index2 + 1) + "//" + normal_index;
-                std::string index3 = to_string(meshes->at(i).faces.at(j).vertex_index3 + 1) + "//" + normal_index;
-                out_str = "f " + index1 + " " + index2 + " " + index3;
+                std::string out_vertex_index1 = to_string(meshes->at(i).faces.at(j).vertex_index1 + 1);
+                std::string out_vertex_index2 = to_string(meshes->at(i).faces.at(j).vertex_index2 + 1);
+                std::string out_vertex_index3 = to_string(meshes->at(i).faces.at(j).vertex_index3 + 1);
+                std::string out_vertex_index4 = "";
+                if(meshes->at(i).faces.at(j).optional_quad_vertex != -1){
+                    out_vertex_index4 = to_string(meshes->at(i).faces.at(j).optional_quad_vertex + 1);
+                }
+                std::string index1 = out_vertex_index1 + "//" + out_vertex_index1;
+                std::string index2 = out_vertex_index2 + "//" + out_vertex_index2;
+                std::string index3 = out_vertex_index3 + "//" + out_vertex_index3;
+                std::string index4 = out_vertex_index4 + "//" + out_vertex_index4;
+                if(out_vertex_index4 == ""){
+                    out_str = "f " + index3 + " " + index2 + " " + index1;
+                }
+                else{
+                    out_str = "f " + index4 + " " + index3 + " " + index2 + " " + index1;
+                }
                 output_mesh << out_str;
                 output_mesh << "\n";
 
@@ -1303,6 +1525,9 @@ class OnlineMeshMapper : public rclcpp::Node
             }
             bool debug_var = false;
             debug_var = voxel_graph_insert(graph, (int64_t) input_values[0], (int64_t) input_values[1], (int64_t) input_values[2]);
+            if(input_values[2] > global_point.z - 1){
+                raycast_delete(global_point.x, global_point.y, global_point.z, input_values[0], input_values[1], input_values[2]);
+            }
             if(debug_var){
                 added_points++;
             }

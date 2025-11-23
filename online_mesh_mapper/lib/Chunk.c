@@ -8,9 +8,10 @@ void chunk_node_connect_upper_neighbour(Chunk_t* chunk, chunk_node_array_entry_t
     assert(chunk != NULL);
     assert(org_index >= 0);
     assert(dest_index >= 0);
-    vertex_set_up_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
-
-    vertex_set_down_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    if(!vertex_get_dead_bit(&(chunk->nodes[dest_index].coord_and_mesh_info))){
+        vertex_set_up_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+        vertex_set_down_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    }
 }
 
 void chunk_node_connect_lower_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
@@ -18,8 +19,10 @@ void chunk_node_connect_lower_neighbour(Chunk_t* chunk, chunk_node_array_entry_t
     assert(chunk != NULL);
     assert(org_index >= 0);
     assert(dest_index >= 0);
-    vertex_set_down_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
-    vertex_set_up_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    if(!vertex_get_dead_bit(&(chunk->nodes[dest_index].coord_and_mesh_info))){
+        vertex_set_down_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+        vertex_set_up_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    }
 }
 
 void chunk_node_connect_left_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
@@ -27,8 +30,10 @@ void chunk_node_connect_left_neighbour(Chunk_t* chunk, chunk_node_array_entry_t 
     assert(chunk != NULL);
     assert(org_index >= 0);
     assert(dest_index >= 0);
-    vertex_set_left_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
-    vertex_set_right_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    if(!vertex_get_dead_bit(&(chunk->nodes[dest_index].coord_and_mesh_info))){
+        vertex_set_left_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+        vertex_set_right_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    }
 }
 
 void chunk_node_connect_right_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
@@ -36,8 +41,10 @@ void chunk_node_connect_right_neighbour(Chunk_t* chunk, chunk_node_array_entry_t
     assert(chunk != NULL);
     assert(org_index >= 0);
     assert(dest_index >= 0);
-    vertex_set_right_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
-    vertex_set_left_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    if(!vertex_get_dead_bit(&(chunk->nodes[dest_index].coord_and_mesh_info))){
+        vertex_set_right_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+        vertex_set_left_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    }
 }
 
 void chunk_node_connect_foward_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
@@ -45,8 +52,10 @@ void chunk_node_connect_foward_neighbour(Chunk_t* chunk, chunk_node_array_entry_
     assert(chunk != NULL);
     assert(org_index >= 0);
     assert(dest_index >= 0);
-    vertex_set_foward_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
-    vertex_set_back_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    if(!vertex_get_dead_bit(&(chunk->nodes[dest_index].coord_and_mesh_info))){
+        vertex_set_foward_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+        vertex_set_back_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    }
 }
 
 void chunk_node_connect_back_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
@@ -54,9 +63,68 @@ void chunk_node_connect_back_neighbour(Chunk_t* chunk, chunk_node_array_entry_t 
     assert(chunk != NULL);
     assert(org_index >= 0);
     assert(dest_index >= 0);
-    vertex_set_back_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
-    vertex_set_foward_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    if(!vertex_get_dead_bit(&(chunk->nodes[dest_index].coord_and_mesh_info))){
+        vertex_set_back_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+        vertex_set_foward_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+    }
 }
+
+
+void chunk_node_disconnect_upper_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
+        chunk_node_array_entry_t dest_index){
+    assert(chunk != NULL);
+    assert(org_index >= 0);
+    assert(dest_index >= 0);
+    vertex_clear_up_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+    vertex_clear_down_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+}
+
+void chunk_node_disconnect_lower_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
+        chunk_node_array_entry_t dest_index){
+    assert(chunk != NULL);
+    assert(org_index >= 0);
+    assert(dest_index >= 0);
+    vertex_clear_down_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+    vertex_clear_up_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+}
+
+void chunk_node_disconnect_left_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
+        chunk_node_array_entry_t dest_index){
+    assert(chunk != NULL);
+    assert(org_index >= 0);
+    assert(dest_index >= 0);
+    vertex_clear_left_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+    vertex_clear_right_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+}
+
+void chunk_node_disconnect_right_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
+        chunk_node_array_entry_t dest_index){
+    assert(chunk != NULL);
+    assert(org_index >= 0);
+    assert(dest_index >= 0);
+    vertex_clear_right_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+    vertex_clear_left_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+}
+
+void chunk_node_disconnect_foward_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
+        chunk_node_array_entry_t dest_index){
+    assert(chunk != NULL);
+    assert(org_index >= 0);
+    assert(dest_index >= 0);
+    vertex_clear_foward_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+    vertex_clear_back_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+}
+
+void chunk_node_disconnect_back_neighbour(Chunk_t* chunk, chunk_node_array_entry_t org_index,
+        chunk_node_array_entry_t dest_index){
+    assert(chunk != NULL);
+    assert(org_index >= 0);
+    assert(dest_index >= 0);
+    vertex_clear_back_bit(&(chunk->nodes[org_index].coord_and_mesh_info));
+    vertex_clear_foward_bit(&(chunk->nodes[dest_index].coord_and_mesh_info));
+}
+
+
 
 void chunk_lookup_and_connect_nodes_helper(Chunk_t* chunk,
         chunk_node_array_entry_t org_index, uint16_t neighbours[6]){
@@ -99,6 +167,50 @@ void chunk_lookup_and_connect_nodes_helper(Chunk_t* chunk,
         }
     }
 }
+
+
+void chunk_lookup_and_delete_nodes_helper(Chunk_t* chunk,
+        chunk_node_array_entry_t org_index, uint16_t neighbours[6]){
+    assert(chunk != NULL);
+    assert(org_index >= 0);
+    if(neighbours[0] != 1){
+        chunk_node_array_entry_t index = chunk_node_lookup(chunk, neighbours[0]);
+        if(index >= 0){
+            chunk_node_disconnect_upper_neighbour(chunk, org_index, index);
+        }
+    }
+    if(neighbours[1] != 1){
+        chunk_node_array_entry_t index = chunk_node_lookup(chunk, neighbours[1]);
+        if(index >= 0){
+            chunk_node_disconnect_lower_neighbour(chunk, org_index, index);
+        }
+    }
+    if(neighbours[2] != 1){
+        chunk_node_array_entry_t index = chunk_node_lookup(chunk, neighbours[2]);
+        if(index >= 0){
+            chunk_node_disconnect_left_neighbour(chunk, org_index, index);
+        }
+    }
+    if(neighbours[3] != 1){
+        chunk_node_array_entry_t index = chunk_node_lookup(chunk, neighbours[3]);
+        if(index >= 0){
+            chunk_node_disconnect_right_neighbour(chunk, org_index, index);
+        }
+    }
+    if(neighbours[4] != 1){
+        chunk_node_array_entry_t index = chunk_node_lookup(chunk, neighbours[4]);
+        if(index >= 0){
+            chunk_node_disconnect_foward_neighbour(chunk, org_index, index);
+        }
+    }
+    if(neighbours[5] != 1){
+        chunk_node_array_entry_t index = chunk_node_lookup(chunk, neighbours[5]);
+        if(index >= 0){
+            chunk_node_disconnect_back_neighbour(chunk, org_index, index);
+        }
+    }
+}
+
 
 Chunk_t chunk_init(){
     Chunk_t output;
@@ -156,6 +268,40 @@ void chunk_node_enter_neighbours(Chunk_t* chunk, chunk_node_array_entry_t index)
     chunk_lookup_and_connect_nodes_helper(chunk, index, neighbour_indeces);
 }
 
+void chunk_node_delete_neighbours(Chunk_t* chunk, chunk_node_array_entry_t index){
+    assert(chunk != NULL);
+    assert(index >= 0);
+    Vertex_t org_vertex = chunk->nodes[index].coord_and_mesh_info;
+    uint8_t org_x_coord = vertex_pick_x_coord(org_vertex.vertex_coords); 
+    uint8_t org_y_coord = vertex_pick_y_coord(org_vertex.vertex_coords); 
+    uint8_t org_z_coord = vertex_pick_z_coord(org_vertex.vertex_coords); 
+    uint16_t neighbour_indeces[6] = {1,1,1,1,1,1}; // up down left right foward back
+    if(org_z_coord < 31){
+        uint16_t test_coord = build_vertex_coords(org_x_coord, org_y_coord, org_z_coord + 1);
+        neighbour_indeces[0] = test_coord;
+    }
+    if(org_z_coord > 0){
+        uint16_t test_coord = build_vertex_coords(org_x_coord, org_y_coord, org_z_coord - 1);
+        neighbour_indeces[1] = test_coord;
+    }
+    if(org_y_coord < 31){
+        uint16_t test_coord = build_vertex_coords(org_x_coord, org_y_coord + 1, org_z_coord);
+        neighbour_indeces[2] = test_coord;
+    }
+    if(org_y_coord > 0){
+        uint16_t test_coord = build_vertex_coords(org_x_coord, org_y_coord - 1, org_z_coord);
+        neighbour_indeces[3] = test_coord;
+    }
+    if(org_x_coord < 31){
+        uint16_t test_coord = build_vertex_coords(org_x_coord + 1, org_y_coord, org_z_coord);
+        neighbour_indeces[4] = test_coord;
+    }
+    if(org_x_coord > 0){
+        uint16_t test_coord = build_vertex_coords(org_x_coord - 1, org_y_coord, org_z_coord);
+        neighbour_indeces[5] = test_coord;
+    }
+    chunk_lookup_and_delete_nodes_helper(chunk, index, neighbour_indeces);
+}
 
 bool chunk_insert(Chunk_t* chunk, int64_t x, int64_t y, int64_t z){
     assert(chunk != NULL);
@@ -185,6 +331,33 @@ bool chunk_insert(Chunk_t* chunk, int64_t x, int64_t y, int64_t z){
         return false;
     }
 }
+bool chunk_delete(Chunk_t* chunk, int64_t x, int64_t y, int64_t z){
+    assert(chunk != NULL);
+    if(chunk == NULL){
+        return false;
+    }
+    assert(build_anchor_coord(x) == chunk->x_offset);
+    assert(build_anchor_coord(y) == chunk->y_offset);
+    assert(build_anchor_coord(z) == chunk->z_offset);
+
+    int16_t rel_x = x - chunk->x_offset;
+    int16_t rel_y = y - chunk->y_offset;
+    int16_t rel_z = z - chunk->z_offset;
+    
+    assert(rel_x >= 0 && rel_x < CHUNK_SIZE);
+    assert(rel_y >= 0 && rel_y < CHUNK_SIZE);
+    assert(rel_z >= 0 && rel_z < CHUNK_SIZE);
+    
+    uint16_t coords = build_vertex_coords((uint8_t) rel_x, (uint8_t)rel_y, (uint8_t)rel_z);
+    int64_t index = chunk_node_lookup(chunk, coords);
+    if(index != -1){
+        chunk_delete_node(chunk, (uint16_t) index);
+        return true;
+    }
+    else{
+        return false;
+    }
+}
 
 uint8_t chunk_request_node(Chunk_t* chunk, uint16_t coords){
     assert(chunk != NULL);
@@ -206,6 +379,10 @@ uint8_t chunk_request_node(Chunk_t* chunk, uint16_t coords){
             }
         }
         else if(chunk->nodes[entry].coord_and_mesh_info.vertex_coords == coords){
+            if(vertex_get_dead_bit(&chunk->nodes[entry].coord_and_mesh_info)){
+                vertex_clear_dead_bit(&chunk->nodes[entry].coord_and_mesh_info);
+                chunk_node_enter_neighbours(chunk, entry);
+            }
             return 2;
         }
     }
@@ -247,7 +424,17 @@ int64_t chunk_create_node(Chunk_t* chunk, uint16_t coords){
     return return_val;
 }
 
-
+bool chunk_delete_node(Chunk_t* chunk, uint16_t index){
+    assert(chunk != NULL);
+    if(vertex_get_dead_bit(&chunk->nodes[index].coord_and_mesh_info)){
+        return false;
+    }
+    else{
+        vertex_set_dead_bit(&chunk->nodes[index].coord_and_mesh_info);
+        chunk_node_delete_neighbours(chunk, index);
+        return true;
+    }
+}
 int64_t build_anchor_coord(int64_t input){
     if(input >= 0){
         int64_t ret_val = (input / CHUNK_SIZE) * CHUNK_SIZE;

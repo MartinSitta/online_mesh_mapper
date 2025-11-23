@@ -25,7 +25,8 @@ extern "C" {
 //1 bit right
 //1 bit foward
 //1 bit back
-//2 bits dead bits
+//1 bit dead bit
+//1 bit deleted flag
 //multiple directions will result in multiple transforms getting applied
 typedef union{
     uint16_t vertex_coords;
@@ -42,6 +43,16 @@ void vertex_set_left_bit(Vertex_t* vertex);
 void vertex_set_right_bit(Vertex_t* vertex);
 void vertex_set_foward_bit(Vertex_t* vertex);
 void vertex_set_back_bit(Vertex_t* vertex);
+void vertex_set_dead_bit(Vertex_t* vertex);
+
+
+void vertex_clear_up_bit(Vertex_t* vertex);
+void vertex_clear_down_bit(Vertex_t* vertex);
+void vertex_clear_left_bit(Vertex_t* vertex);
+void vertex_clear_right_bit(Vertex_t* vertex);
+void vertex_clear_foward_bit(Vertex_t* vertex);
+void vertex_clear_back_bit(Vertex_t* vertex);
+void vertex_clear_dead_bit(Vertex_t* vertex);
 
 bool vertex_get_up_bit(Vertex_t* vertex);
 bool vertex_get_down_bit(Vertex_t* vertex);
@@ -49,6 +60,7 @@ bool vertex_get_left_bit(Vertex_t* vertex);
 bool vertex_get_right_bit(Vertex_t* vertex);
 bool vertex_get_foward_bit(Vertex_t* vertex);
 bool vertex_get_back_bit(Vertex_t* vertex);
+bool vertex_get_dead_bit(Vertex_t* vertex);
 
 uint16_t build_vertex_coords(uint8_t x, uint8_t y, uint8_t z);
 

@@ -62,6 +62,38 @@ int main(){
     //for debugging
     voxel_graph_insert(graph, -9, -32, 12);
     voxel_graph_insert(graph,167, 82 ,-1);
+
+    voxel_graph_insert(graph, 1, 1, 2);
+    voxel_graph_insert(graph, 1, 2, 1);
+    voxel_graph_insert(graph, 2, 1, 1);
+    voxel_graph_delete(graph, 1, 1, 1);
+
+    uint16_t test_coord_center = build_vertex_coords(1, 1, 1);
+    uint16_t test_coord_above = build_vertex_coords(1, 1, 2);
+    uint16_t test_coord_left = build_vertex_coords(1, 2, 1);
+    uint16_t test_coord_ahead = build_vertex_coords(2, 1, 1);
+
+    int64_t test_index_center = chunk_node_lookup(&graph->chunks[0], test_coord_center);
+    int64_t test_index_above = chunk_node_lookup(&graph->chunks[0], test_coord_above);
+    int64_t test_index_left = chunk_node_lookup(&graph->chunks[0], test_coord_left);
+    int64_t test_index_ahead = chunk_node_lookup(&graph->chunks[0], test_coord_ahead);
+
+    assert(graph->chunks[0].nodes[test_index_center].coord_and_mesh_info.buf[2] == 1);
+    assert(!vertex_get_down_bit(&graph->chunks[0].nodes[test_index_above].coord_and_mesh_info));
+    assert(!vertex_get_right_bit(&graph->chunks[0].nodes[test_index_left].coord_and_mesh_info));
+    assert(!vertex_get_back_bit(&graph->chunks[0].nodes[test_index_ahead].coord_and_mesh_info));
+    
+    voxel_graph_insert(graph, 1, 1, 1);
+
+    assert(vertex_get_down_bit(&graph->chunks[0].nodes[test_index_above].coord_and_mesh_info));
+    assert(vertex_get_right_bit(&graph->chunks[0].nodes[test_index_left].coord_and_mesh_info));
+    assert(vertex_get_back_bit(&graph->chunks[0].nodes[test_index_ahead].coord_and_mesh_info));
+    
+    assert(vertex_get_up_bit(&graph->chunks[0].nodes[test_index_center].coord_and_mesh_info));
+    assert(vertex_get_left_bit(&graph->chunks[0].nodes[test_index_center].coord_and_mesh_info));
+    assert(vertex_get_foward_bit(&graph->chunks[0].nodes[test_index_center].coord_and_mesh_info));
+    assert(!vertex_get_dead_bit(&graph->chunks[0].nodes[test_index_center].coord_and_mesh_info));
+
     voxel_graph_free(&graph);
     return 0;
 }

@@ -80,6 +80,18 @@ bool voxel_graph_insert(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
     bool ret_val = chunk_insert(&graph->chunks[arr_entry],x, y, z);
     return ret_val;
 }
+bool voxel_graph_delete(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
+    assert(graph != NULL);
+    int64_t arr_entry = voxel_graph_chunk_hash_table_lookup(graph, x, y, z);
+    if(arr_entry < 0){
+        return false;
+    }
+    assert(graph->chunks[arr_entry].x_offset == build_anchor_coord(x));
+    assert(graph->chunks[arr_entry].y_offset == build_anchor_coord(y));
+    assert(graph->chunks[arr_entry].z_offset == build_anchor_coord(z));
+    bool ret_val = chunk_delete(&graph->chunks[arr_entry],x, y, z);
+    return ret_val;
+}
 int64_t voxel_graph_chunk_hash_table_lookup(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
     int64_t chunk_anchor_x = build_anchor_coord(x);
     int64_t chunk_anchor_y = build_anchor_coord(y);

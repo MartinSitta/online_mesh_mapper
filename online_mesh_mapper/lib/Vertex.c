@@ -9,6 +9,11 @@ bool vertex_get_up_bit(Vertex_t* vertex){
     assert(vertex != NULL);
     return vertex->buf[2] & 128;
 }
+void vertex_clear_up_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] & (~128);
+}
+
 void vertex_set_down_bit(Vertex_t* vertex){
     assert(vertex != NULL);
     vertex->buf[2] = vertex->buf[2] | 64;
@@ -16,6 +21,10 @@ void vertex_set_down_bit(Vertex_t* vertex){
 bool vertex_get_down_bit(Vertex_t* vertex){
     assert(vertex != NULL);
     return vertex->buf[2] & 64;
+}
+void vertex_clear_down_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] & (~64);
 }
 
 void vertex_set_left_bit(Vertex_t* vertex){
@@ -26,6 +35,10 @@ bool vertex_get_left_bit(Vertex_t* vertex){
     assert(vertex != NULL);
     return vertex->buf[2] & 32;
 }
+void vertex_clear_left_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] & (~32);
+}
 
 void vertex_set_right_bit(Vertex_t* vertex){
     assert(vertex != NULL);
@@ -34,6 +47,10 @@ void vertex_set_right_bit(Vertex_t* vertex){
 bool vertex_get_right_bit(Vertex_t* vertex){
     assert(vertex != NULL);
     return vertex->buf[2] & 16;
+}
+void vertex_clear_right_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] & (~16);
 }
 
 void vertex_set_foward_bit(Vertex_t* vertex){
@@ -44,6 +61,10 @@ bool vertex_get_foward_bit(Vertex_t* vertex){
     assert(vertex != NULL);
     return vertex->buf[2] & 8;
 }
+void vertex_clear_foward_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] & (~8);
+}
 
 void vertex_set_back_bit(Vertex_t* vertex){
     assert(vertex != NULL);
@@ -52,6 +73,22 @@ void vertex_set_back_bit(Vertex_t* vertex){
 bool vertex_get_back_bit(Vertex_t* vertex){
     assert(vertex != NULL);
     return vertex->buf[2] & 4;
+}
+void vertex_clear_back_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] & (~4);
+}
+void vertex_set_dead_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] | 1;
+}
+bool vertex_get_dead_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    return vertex->buf[2] & 1;
+}
+void vertex_clear_dead_bit(Vertex_t* vertex){
+    assert(vertex != NULL);
+    vertex->buf[2] = vertex->buf[2] & (~1);
 }
 
 
