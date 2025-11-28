@@ -168,7 +168,6 @@ void chunk_lookup_and_connect_nodes_helper(Chunk_t* chunk,
     }
 }
 
-
 void chunk_lookup_and_delete_nodes_helper(Chunk_t* chunk,
         chunk_node_array_entry_t org_index, uint16_t neighbours[6]){
     assert(chunk != NULL);
@@ -268,6 +267,7 @@ void chunk_node_enter_neighbours(Chunk_t* chunk, chunk_node_array_entry_t index)
     chunk_lookup_and_connect_nodes_helper(chunk, index, neighbour_indeces);
 }
 
+
 void chunk_node_delete_neighbours(Chunk_t* chunk, chunk_node_array_entry_t index){
     assert(chunk != NULL);
     assert(index >= 0);
@@ -303,6 +303,7 @@ void chunk_node_delete_neighbours(Chunk_t* chunk, chunk_node_array_entry_t index
     chunk_lookup_and_delete_nodes_helper(chunk, index, neighbour_indeces);
 }
 
+
 bool chunk_insert(Chunk_t* chunk, int64_t x, int64_t y, int64_t z){
     assert(chunk != NULL);
     if(chunk == NULL){
@@ -324,7 +325,9 @@ bool chunk_insert(Chunk_t* chunk, int64_t x, int64_t y, int64_t z){
     uint8_t status_code = chunk_request_node(chunk, coords);
     if(status_code == 1){
         chunk_node_array_entry_t org_index = chunk->current_node_index -1;
-        chunk_node_enter_neighbours(chunk, org_index);
+        return true;
+    }
+    else if(status_code == 2){
         return true;
     }
     else{
@@ -381,7 +384,6 @@ uint8_t chunk_request_node(Chunk_t* chunk, uint16_t coords){
         else if(chunk->nodes[entry].coord_and_mesh_info.vertex_coords == coords){
             if(vertex_get_dead_bit(&chunk->nodes[entry].coord_and_mesh_info)){
                 vertex_clear_dead_bit(&chunk->nodes[entry].coord_and_mesh_info);
-                chunk_node_enter_neighbours(chunk, entry);
             }
             return 2;
         }
@@ -430,8 +432,8 @@ bool chunk_delete_node(Chunk_t* chunk, uint16_t index){
         return false;
     }
     else{
+        uint16_t coords = chunk->nodes[index].coord_and_mesh_info.vertex_coords;
         vertex_set_dead_bit(&chunk->nodes[index].coord_and_mesh_info);
-        chunk_node_delete_neighbours(chunk, index);
         return true;
     }
 }

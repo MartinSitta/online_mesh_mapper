@@ -13,12 +13,16 @@ def generate_launch_description():
                 'in_topic': '/all_sensor_global_pointcloud2', #input topic of type pointcloud_2
                 'frame_id': 'odom', #frame id of the input pointcloud 2
                 'odometry_msg_topic': '/Spot/odometry', #topic that outputs nav_msgs_msg_odometry
-                'scalar': 8,
-                'render_distance_horizontal':3,
-                'render_distance_vertical':1,
+                'scalar': 4,
+                'render_distance_horizontal':6,
+                'render_distance_vertical':3,
                 'out_topic':'/navigation/mesh_map',
                 'max_chunks':1<<13,#this HAS to be a power of 2
-                'obj_filepath':'/home/martin/Desktop/spot_mesh_map'
+                'obj_filepath':'/home/martin/Desktop/spot_mesh_map',
+                'v2_mesher': 0,
+                'ros2_msg_greedy_mesher': 1,
+                'wavefront_greedy_mesher': 0,
+                'raycast_enable': 0
             }],
         )
     ])

@@ -94,6 +94,22 @@ int main(){
     assert(vertex_get_foward_bit(&graph->chunks[0].nodes[test_index_center].coord_and_mesh_info));
     assert(!vertex_get_dead_bit(&graph->chunks[0].nodes[test_index_center].coord_and_mesh_info));
 
+    voxel_graph_insert(graph, 31, 0, 0);
+    voxel_graph_insert(graph, 32, 0, 0);
+    uint16_t test_chunk_border = build_vertex_coords(31, 0, 0);
+    uint16_t test_chunk_border_2 = build_vertex_coords(0, 0, 0);
+    int64_t chunk_index_2 = voxel_graph_chunk_hash_table_lookup(graph, 32, 0, 0);
+    int64_t chunk_node_index_2 = chunk_node_lookup(&graph->chunks[chunk_index_2], test_chunk_border_2);
+    int64_t chunk_node_index_1 = chunk_node_lookup(&graph->chunks[0], test_chunk_border);
+
+    assert(vertex_get_foward_bit(&graph->chunks[0].nodes[chunk_node_index_1].coord_and_mesh_info));
+    assert(vertex_get_back_bit(&graph->chunks[chunk_index_2].nodes[chunk_node_index_2].coord_and_mesh_info));
+
+    voxel_graph_delete(graph, 31, 0, 0);
+
+    assert(!vertex_get_foward_bit(&graph->chunks[0].nodes[chunk_node_index_1].coord_and_mesh_info));
+    assert(!vertex_get_back_bit(&graph->chunks[chunk_index_2].nodes[chunk_node_index_2].coord_and_mesh_info));
+    
     voxel_graph_free(&graph);
     return 0;
 }

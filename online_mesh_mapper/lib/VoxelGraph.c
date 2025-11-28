@@ -64,7 +64,29 @@ VoxelGraph_t* voxel_graph_init(uint32_t chunk_count)
     voxel_graph_init_arrays(output);
     return output;
 }
-
+Vertex_t* voxel_graph_get_vertex(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
+    assert(graph != NULL);
+    int64_t index = voxel_graph_chunk_hash_table_lookup(graph, x, y, z);
+    if(index == -1){
+        return NULL;
+    }
+    assert(build_anchor_coord(x) == graph->chunks[index].x_offset);                           
+    assert(build_anchor_coord(y) == graph->chunks[index].y_offset);                           
+    assert(build_anchor_coord(z) == graph->chunks[index].z_offset);
+    
+    int16_t rel_x = x - graph->chunks[index].x_offset;                                        
+    int16_t rel_y = y - graph->chunks[index].y_offset;                                        
+    int16_t rel_z = z - graph->chunks[index].z_offset;                                        
+    
+    uint16_t node_coords = build_vertex_coords((uint8_t) rel_x, (uint8_t) rel_y, (uint8_t) rel_z);
+    int64_t node_index = chunk_node_lookup(&graph->chunks[index], node_coords);
+    if(node_index == -1){
+        return NULL;
+    }
+    Vertex_t* out_ptr = &graph->chunks[index].nodes[node_index].coord_and_mesh_info;
+    assert(out_ptr->vertex_coords == node_coords);
+    return &graph->chunks[index].nodes[node_index].coord_and_mesh_info;
+}
 bool voxel_graph_insert(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
     assert(graph != NULL);
     //printf("performing hash table lookup\n");
@@ -78,6 +100,9 @@ bool voxel_graph_insert(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
     assert(graph->chunks[arr_entry].z_offset == build_anchor_coord(z));
     //printf("performing chunk_insertion\n");
     bool ret_val = chunk_insert(&graph->chunks[arr_entry],x, y, z);
+    if(ret_val){
+        voxel_graph_enter_neighbours(graph, x, y, z);
+    }
     return ret_val;
 }
 bool voxel_graph_delete(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
@@ -90,6 +115,9 @@ bool voxel_graph_delete(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
     assert(graph->chunks[arr_entry].y_offset == build_anchor_coord(y));
     assert(graph->chunks[arr_entry].z_offset == build_anchor_coord(z));
     bool ret_val = chunk_delete(&graph->chunks[arr_entry],x, y, z);
+    if(ret_val){
+        voxel_graph_delete_neighbours(graph, x, y, z);
+    }
     return ret_val;
 }
 int64_t voxel_graph_chunk_hash_table_lookup(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
@@ -181,6 +209,103 @@ int64_t voxel_graph_create_chunk(VoxelGraph_t* graph, int64_t x, int64_t y, int6
     graph->chunks[return_index].z_offset = build_anchor_coord(z);
     graph->current_chunk_index++;
     return return_index;
+}
+
+void voxel_graph_enter_neighbours(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
+    Vertex_t* org_vertex = voxel_graph_get_vertex(graph, x, y, z);
+
+    Vertex_t* upper_vertex = voxel_graph_get_vertex(graph, x, y, z + 1);            
+    Vertex_t* lower_vertex = voxel_graph_get_vertex(graph, x, y, z - 1);            
+    Vertex_t* left_vertex = voxel_graph_get_vertex(graph, x, y + 1, z);             
+    Vertex_t* right_vertex = voxel_graph_get_vertex(graph, x, y - 1, z);            
+    Vertex_t* foward_vertex = voxel_graph_get_vertex(graph, x + 1, y, z);            
+    Vertex_t* back_vertex = voxel_graph_get_vertex(graph, x - 1, y, z);
+
+    assert(org_vertex != NULL);                                                 
+    if(upper_vertex != NULL){
+        if(!vertex_get_dead_bit(upper_vertex)){
+            vertex_set_up_bit(org_vertex);
+            vertex_set_down_bit(upper_vertex);
+        }
+    }
+    if(lower_vertex != NULL){                                                   
+        if(!vertex_get_dead_bit(lower_vertex)){
+            vertex_set_down_bit(org_vertex);
+            vertex_set_up_bit(lower_vertex);
+        }
+    }                                                                           
+    if(left_vertex != NULL){                                                    
+        if(!vertex_get_dead_bit(left_vertex)){
+            vertex_set_left_bit(org_vertex);
+            vertex_set_right_bit(left_vertex);
+        }
+    }                                                                           
+    if(right_vertex != NULL){                                                   
+        if(!vertex_get_dead_bit(right_vertex)){
+            vertex_set_right_bit(org_vertex);
+            vertex_set_left_bit(right_vertex);
+        }
+    }                                                                           
+    if(foward_vertex != NULL){                                                  
+        if(!vertex_get_dead_bit(foward_vertex)){
+            vertex_set_foward_bit(org_vertex);
+            vertex_set_back_bit(foward_vertex);
+        }
+    }                                                                           
+    if(back_vertex != NULL){                                                    
+        if(!vertex_get_dead_bit(back_vertex)){
+            vertex_set_back_bit(org_vertex);
+            vertex_set_foward_bit(back_vertex);
+        }
+    }                
+}
+
+void voxel_graph_delete_neighbours(VoxelGraph_t* graph, int64_t x, int64_t y, int64_t z){
+    Vertex_t* org_vertex = voxel_graph_get_vertex(graph, x, y, z);
+    Vertex_t* upper_vertex = voxel_graph_get_vertex(graph, x, y, z + 1);
+    Vertex_t* lower_vertex = voxel_graph_get_vertex(graph, x, y, z - 1);
+    Vertex_t* left_vertex = voxel_graph_get_vertex(graph, x, y + 1, z);
+    Vertex_t* right_vertex = voxel_graph_get_vertex(graph, x, y - 1, z);
+    Vertex_t* foward_vertex = voxel_graph_get_vertex(graph, x + 1, y, z);            
+    Vertex_t* back_vertex = voxel_graph_get_vertex(graph, x - 1, y, z);            
+    assert(org_vertex != NULL);
+    if(upper_vertex != NULL){
+        vertex_clear_up_bit(org_vertex);
+        vertex_clear_down_bit(upper_vertex);
+        assert(!vertex_get_up_bit(org_vertex));
+        assert(!vertex_get_down_bit(upper_vertex));
+    }
+    if(lower_vertex != NULL){
+        vertex_clear_down_bit(org_vertex);
+        vertex_clear_up_bit(lower_vertex);
+        assert(!vertex_get_down_bit(org_vertex));
+        assert(!vertex_get_up_bit(lower_vertex));
+    }
+    if(left_vertex != NULL){
+        vertex_clear_left_bit(org_vertex);
+        vertex_clear_right_bit(left_vertex);
+        assert(!vertex_get_left_bit(org_vertex));
+        assert(!vertex_get_right_bit(left_vertex));
+    }
+    if(right_vertex != NULL){
+        vertex_clear_right_bit(org_vertex);
+        vertex_clear_left_bit(right_vertex);
+        assert(!vertex_get_right_bit(org_vertex));
+        assert(!vertex_get_left_bit(right_vertex));
+    }
+    if(foward_vertex != NULL){
+        vertex_clear_foward_bit(org_vertex);
+        vertex_clear_back_bit(foward_vertex);
+        assert(!vertex_get_foward_bit(org_vertex));
+        assert(!vertex_get_back_bit(foward_vertex));
+    }
+    if(back_vertex != NULL){
+        vertex_clear_back_bit(org_vertex);
+        vertex_clear_foward_bit(back_vertex);
+        assert(!vertex_get_back_bit(org_vertex));
+        assert(!vertex_get_foward_bit(back_vertex));
+    }
+
 }
 
 void voxel_graph_free(VoxelGraph_t** graph){
